@@ -1,0 +1,23 @@
+# Existing local credential file. Never publish it.
+[Cc]ontext7*.md
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local runtime, app outputs, media, databases, and backups.
+.agent-runtime/
+node_modules/
+.next/
+.vercel/
+coverage/
+data/
+uploads/
+backups/
+*.sqlite*
+*.db
+*.log
+
+# Existing empty local file; preserved without publishing.
+0.26.0
