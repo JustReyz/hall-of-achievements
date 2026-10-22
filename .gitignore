@@ -14,9 +14,9 @@ node_modules/
 .vercel/
 *.tsbuildinfo
 coverage/
-data/
-uploads/
-backups/
+/data/
+/uploads/
+/backups/
 *.sqlite*
 *.db
 *.log

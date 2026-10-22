@@ -83,3 +83,22 @@ Autonomous execution via `teamwork_preview` multi-agent swarm with varied reason
 - `npm run lint`: 0 warnings, 0 errors.
 - `npm run build`: Exit code 0, all 7 pages/routes compiled and optimized.
 - Independent victory auditor: `teamwork_preview_victory_auditor` verified authentic cryptography, genuine Drizzle queries, and fail-closed security properties. Outcome: **VICTORY CONFIRMED**.
+
+## Milestone 2 — Private Art Archive & Image Pipeline (2026-10-22)
+
+Autonomous execution via `teamwork_preview` multi-agent swarm with varied reasoning models across specification mining, architecture, implementation, adversarial critique, remediation, and forensic auditing.
+
+### Scope and Implementation
+- **R1 Database Schemas & Storage Parity**: Drizzle ORM schemas for `achievements`, `assets`, and `upload_intents` in `src/lib/db/schema.ts` with complete type parity between in-memory PGlite WASM (testing) and Neon PostgreSQL pooled driver (production). Includes status lifecycles (`pending`, `ready`, `deleting`), foreign keys, and indexes for stable cursor pagination and cleanups.
+- **R2 Two-Phase Direct Upload & Quota Engine (`AC3`, `AC4`)**: Pre-signed direct upload capability issuance reserving 12 MiB atomic quota against the 70% storage ceiling. Max 3 concurrent active intents per client. Two-hour expiration lifecycle with automatic orphan maintenance. If capability generation fails, the intent is rolled back to cleaned state immediately releasing reserved quota.
+- **R3 Image Validation & Derivative Pipeline (`AC3`)**: Sharp two-stage verification inspecting authentic magic byte signatures (rejecting SVG, GIF, HTML, PSD, corrupt files), enforcing <=10 MiB file size and <=20 MP dimensions (`limitInputPixels: 20_000_000` to prevent decompression bombs). Orientation normalization via EXIF auto-rotate and WebP derivative processing (display version: max 1920x1080 at 85% quality; thumbnail: max 480x480 at 80% quality).
+- **R4 Gallery Query Engine, Deletion & Signed Reads (`AC4`, `AC5`)**: Stable cursor pagination (24 items/page) sorted deterministically by `(created_at DESC, id DESC)`. Case-insensitive title and tag search with SQL LIKE wildcard escaping (`%`, `_`, `\`). Tombstone-first deletion transitioning achievements to `deleting` before idempotently purging original, display, and thumbnail assets from storage. Short-lived signed asset read URLs expiring in <=60 seconds with strict `Cache-Control: private, no-store` headers.
+- **R5 Responsive Gallery Frontend UI (`AC4`, `AC5`)**: Accessible gallery view at `/` supporting debounced search, modal asset inspection with full metadata, upload drawer with progress indication, edit capabilities, and download options.
+- **Credential & Secret Isolation**: `Context7.md` untracked and excluded via `.gitignore`. Zero secrets or credentials leaked in client components, API routes, or test suites.
+
+### Fresh Verification Evidence
+- `npm test`: 16 test files passed, 151 tests passed (100% pass rate).
+- `npx tsc --noEmit`: 0 compiler errors under strict type checking.
+- `npm run lint`: 0 warnings, 0 errors.
+- `npm run build`: Exit code 0, all 12 routes generated and optimized.
+- Independent audit: `auditor_m2_it2` verified CLEAN (no dummy implementations, facades, hardcoded outputs, or secret leaks).

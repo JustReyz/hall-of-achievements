@@ -80,6 +80,59 @@ export async function initTables(client: {
       );
 
       CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits (window_start);
+
+      CREATE TABLE IF NOT EXISTS achievements (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        title VARCHAR(120) NOT NULL,
+        completion_date DATE NOT NULL,
+        notes TEXT,
+        tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+        state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'ready', 'deleting')),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_achievements_state_cursor 
+        ON achievements (state, completion_date DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_achievements_completion_date 
+        ON achievements (completion_date DESC);
+      CREATE INDEX IF NOT EXISTS idx_achievements_state 
+        ON achievements (state);
+
+      CREATE TABLE IF NOT EXISTS assets (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        achievement_id UUID NOT NULL REFERENCES achievements(id) ON DELETE CASCADE,
+        original_key TEXT NOT NULL,
+        display_key TEXT NOT NULL,
+        thumbnail_key TEXT NOT NULL,
+        original_bytes INTEGER NOT NULL,
+        mime_type VARCHAR(50) NOT NULL,
+        width INTEGER NOT NULL,
+        height INTEGER NOT NULL,
+        checksum VARCHAR(64) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_assets_achievement_id ON assets (achievement_id);
+      CREATE INDEX IF NOT EXISTS idx_assets_checksum ON assets (checksum);
+
+      CREATE TABLE IF NOT EXISTS upload_intents (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        achievement_id UUID REFERENCES achievements(id) ON DELETE CASCADE,
+        token_hash VARCHAR(64) NOT NULL,
+        file_name VARCHAR(255) NOT NULL,
+        mime_type VARCHAR(50) NOT NULL,
+        declared_size INTEGER NOT NULL,
+        reserved_bytes INTEGER NOT NULL,
+        quarantine_key TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'consumed', 'expired', 'cleaned')),
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_upload_intents_status ON upload_intents (status);
+      CREATE INDEX IF NOT EXISTS idx_upload_intents_expires ON upload_intents (expires_at);
+      CREATE INDEX IF NOT EXISTS idx_upload_intents_token_hash ON upload_intents (token_hash);
     `);
     return;
   }
@@ -115,6 +168,53 @@ export async function initTables(client: {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits (window_start)`,
+    `CREATE TABLE IF NOT EXISTS achievements (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      title VARCHAR(120) NOT NULL,
+      completion_date DATE NOT NULL,
+      notes TEXT,
+      tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'ready', 'deleting')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_achievements_state_cursor 
+      ON achievements (state, completion_date DESC, id DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_achievements_completion_date 
+      ON achievements (completion_date DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_achievements_state 
+      ON achievements (state)`,
+    `CREATE TABLE IF NOT EXISTS assets (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      achievement_id UUID NOT NULL REFERENCES achievements(id) ON DELETE CASCADE,
+      original_key TEXT NOT NULL,
+      display_key TEXT NOT NULL,
+      thumbnail_key TEXT NOT NULL,
+      original_bytes INTEGER NOT NULL,
+      mime_type VARCHAR(50) NOT NULL,
+      width INTEGER NOT NULL,
+      height INTEGER NOT NULL,
+      checksum VARCHAR(64) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_assets_achievement_id ON assets (achievement_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_assets_checksum ON assets (checksum)`,
+    `CREATE TABLE IF NOT EXISTS upload_intents (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      achievement_id UUID REFERENCES achievements(id) ON DELETE CASCADE,
+      token_hash VARCHAR(64) NOT NULL,
+      file_name VARCHAR(255) NOT NULL,
+      mime_type VARCHAR(50) NOT NULL,
+      declared_size INTEGER NOT NULL,
+      reserved_bytes INTEGER NOT NULL,
+      quarantine_key TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'consumed', 'expired', 'cleaned')),
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_upload_intents_status ON upload_intents (status)`,
+    `CREATE INDEX IF NOT EXISTS idx_upload_intents_expires ON upload_intents (expires_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_upload_intents_token_hash ON upload_intents (token_hash)`,
   ];
 
   for (const stmt of statements) {
