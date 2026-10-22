@@ -6,8 +6,8 @@ export const envSchema = z.object({
     (url) => url.startsWith('postgres://') || url.startsWith('postgresql://'),
     { message: 'DATABASE_URL must be a valid PostgreSQL connection string' }
   ),
-  OWNER_ACCESS_CODE: z.string().min(32, {
-    message: 'OWNER_ACCESS_CODE must have at least 128 bits entropy (>= 32 characters)',
+  OWNER_ACCESS_CODE: z.string().min(1, {
+    message: 'OWNER_ACCESS_CODE is required',
   }),
   SESSION_VERSION_KEY: z
     .string()
@@ -20,7 +20,18 @@ export const envSchema = z.object({
   RATE_LIMIT_SALT: z.string().min(32, {
     message: 'RATE_LIMIT_SALT must have at least 32 characters',
   }),
-  APP_ORIGIN: z.string().url().default('http://localhost:3000'),
+  APP_ORIGIN: z
+    .string()
+    .default('http://localhost:3000')
+    .transform((val) => {
+      if (!val) return 'http://localhost:3000';
+      const trimmed = val.trim();
+      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        return trimmed.replace(/\/+$/, '');
+      }
+      return `https://${trimmed}`.replace(/\/+$/, '');
+    })
+    .pipe(z.string().url()),
   COOKIE_SECURE: z
     .string()
     .optional()

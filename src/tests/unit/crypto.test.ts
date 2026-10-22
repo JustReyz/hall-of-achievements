@@ -56,10 +56,14 @@ describe('Unit: Cryptography & Secrets Architecture', () => {
       }
     });
 
-    it('fails closed when server secret is missing, empty, or below entropy threshold', () => {
+    it('fails closed when server secret is missing or empty', () => {
       expect(verifyOwnerAccessCode(validSecret, '')).toBe(false);
-      expect(verifyOwnerAccessCode(validSecret, 'short_secret_under_32_chars')).toBe(false);
       expect(verifyOwnerAccessCode(validSecret, undefined as unknown as string)).toBe(false);
+    });
+
+    it('verifies custom short owner codes correctly in constant time', () => {
+      expect(verifyOwnerAccessCode('begies', 'begies')).toBe(true);
+      expect(verifyOwnerAccessCode('wrong', 'begies')).toBe(false);
     });
   });
 
@@ -134,9 +138,15 @@ describe('Unit: Cryptography & Secrets Architecture', () => {
       expect(v1).not.toBe(v2);
     });
 
-    it('throws when secrets are below entropy threshold', () => {
+    it('throws when sessionVersionKey is below entropy threshold or ownerAccessCode is empty', () => {
       expect(() => deriveAuthVersion('short_key', validSecret)).toThrow();
-      expect(() => deriveAuthVersion(versionKey, 'short_code')).toThrow();
+      expect(() => deriveAuthVersion(versionKey, '')).toThrow();
+    });
+
+    it('derives auth version cleanly for custom short owner codes', () => {
+      const version = deriveAuthVersion(versionKey, 'begies');
+      expect(version.length).toBe(64);
+      expect(/^[0-9a-f]{64}$/.test(version)).toBe(true);
     });
   });
 

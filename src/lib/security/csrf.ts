@@ -31,26 +31,56 @@ export function validateCsrf(request: Request): CsrfValidationResult {
       return { valid: false, reason: 'Null origin is disallowed on mutating routes' };
     }
 
+    let requestOrigin: string;
     try {
-      const requestOrigin = new URL(originHeader).origin;
-      const expectedOrigin = new URL(env.APP_ORIGIN).origin;
-
-      // Allow matching against APP_ORIGIN or request host URL
-      const host = request.headers.get('host');
-      const protocol = request.headers.get('x-forwarded-proto') ?? 'http';
-      const requestHostOrigin = host ? `${protocol}://${host}` : null;
-
-      const matchesAppOrigin = requestOrigin === expectedOrigin;
-      const matchesHostOrigin = requestHostOrigin ? requestOrigin === requestHostOrigin : false;
-
-      if (!matchesAppOrigin && !matchesHostOrigin) {
-        return {
-          valid: false,
-          reason: `Origin mismatch: received ${requestOrigin}, expected ${expectedOrigin}`,
-        };
-      }
+      requestOrigin = new URL(originHeader).origin;
     } catch {
       return { valid: false, reason: 'Malformed origin header' };
+    }
+
+    try {
+      // 1. Match against configured APP_ORIGIN
+      let expectedOrigin: string | null = null;
+      try {
+        const rawAppOrigin = env.APP_ORIGIN;
+        if (rawAppOrigin) {
+          const withProto =
+            rawAppOrigin.startsWith('http://') || rawAppOrigin.startsWith('https://')
+              ? rawAppOrigin
+              : `https://${rawAppOrigin}`;
+          expectedOrigin = new URL(withProto).origin;
+        }
+      } catch (err) {
+        console.warn('[SECURITY WARNING] Could not parse APP_ORIGIN in CSRF check:', err);
+      }
+
+      // 2. Match against actual incoming request URL
+      let requestUrlOrigin: string | null = null;
+      try {
+        requestUrlOrigin = new URL(request.url).origin;
+      } catch {
+        // ignore invalid request URL
+      }
+
+      // 3. Match against Host / X-Forwarded-Host headers
+      const forwardedHost = request.headers.get('x-forwarded-host');
+      const host = forwardedHost ?? request.headers.get('host');
+      const protocol = request.headers.get('x-forwarded-proto') ?? 'https';
+      const requestHostOrigin = host ? `${protocol}://${host}` : null;
+
+      const matchesAppOrigin = expectedOrigin ? requestOrigin === expectedOrigin : false;
+      const matchesUrlOrigin = requestUrlOrigin ? requestOrigin === requestUrlOrigin : false;
+      const matchesHostOrigin = requestHostOrigin ? requestOrigin === requestHostOrigin : false;
+
+      if (!matchesAppOrigin && !matchesUrlOrigin && !matchesHostOrigin) {
+        return {
+          valid: false,
+          reason: `Origin mismatch: received ${requestOrigin}, expected ${expectedOrigin ?? requestHostOrigin ?? requestUrlOrigin}`,
+        };
+      }
+    } catch (err) {
+      console.error('[CSRF ERROR] Unexpected error during origin verification:', err);
+      return { valid: false, reason: 'Origin verification failed' };
     }
   }
 

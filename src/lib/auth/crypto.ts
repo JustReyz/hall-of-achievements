@@ -13,8 +13,8 @@ export function verifyOwnerAccessCode(
   expectedSecret?: string
 ): boolean {
   const secret = arguments.length > 1 ? expectedSecret : env.OWNER_ACCESS_CODE;
-  if (!secret || typeof secret !== 'string' || secret.length < 32) {
-    console.error('[SECURITY FATAL] OWNER_ACCESS_CODE is missing or below entropy threshold. Failing closed.');
+  if (!secret || typeof secret !== 'string' || secret.length < 1) {
+    console.error('[SECURITY FATAL] OWNER_ACCESS_CODE is missing or empty. Failing closed.');
     return false;
   }
 
@@ -73,8 +73,8 @@ export function deriveAuthVersion(
   if (!sessionVersionKey || sessionVersionKey.length < 64) {
     throw new Error('SESSION_VERSION_KEY is missing or below entropy threshold (>= 64 hex chars)');
   }
-  if (!ownerAccessCode || ownerAccessCode.length < 32) {
-    throw new Error('OWNER_ACCESS_CODE is missing or below entropy threshold (>= 32 chars)');
+  if (!ownerAccessCode || ownerAccessCode.length < 1) {
+    throw new Error('OWNER_ACCESS_CODE is missing or empty');
   }
 
   const message = `${AUTH_VERSION_DOMAIN_PREFIX}${ownerAccessCode}`;

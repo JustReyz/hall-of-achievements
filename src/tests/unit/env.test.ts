@@ -21,11 +21,11 @@ describe('Unit: Environment Boot Validation & Zero-Leak Redactor', () => {
     expect(env.APP_ORIGIN).toBe('http://localhost:3000');
   });
 
-  it('rejects missing or short OWNER_ACCESS_CODE (< 32 chars)', () => {
+  it('rejects missing or empty OWNER_ACCESS_CODE', () => {
     expect(() =>
       parseEnv({
         ...validBaseEnv,
-        OWNER_ACCESS_CODE: 'short_code',
+        OWNER_ACCESS_CODE: '',
       })
     ).toThrow(EnvironmentValidationError);
 
@@ -35,6 +35,22 @@ describe('Unit: Environment Boot Validation & Zero-Leak Redactor', () => {
         OWNER_ACCESS_CODE: undefined,
       })
     ).toThrow(EnvironmentValidationError);
+  });
+
+  it('accepts custom OWNER_ACCESS_CODE of any length', () => {
+    const parsed = parseEnv({
+      ...validBaseEnv,
+      OWNER_ACCESS_CODE: 'begies',
+    });
+    expect(parsed.OWNER_ACCESS_CODE).toBe('begies');
+  });
+
+  it('normalizes APP_ORIGIN without protocol or with trailing slash', () => {
+    const parsed = parseEnv({
+      ...validBaseEnv,
+      APP_ORIGIN: 'hall-of-achievements.vercel.app/',
+    });
+    expect(parsed.APP_ORIGIN).toBe('https://hall-of-achievements.vercel.app');
   });
 
   it('rejects SESSION_VERSION_KEY with < 64 hex characters or non-hex characters', () => {
