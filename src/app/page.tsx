@@ -6,6 +6,7 @@ import { SearchBar } from '@/components/gallery/SearchBar';
 import { GalleryGrid } from '@/components/gallery/GalleryGrid';
 import { AddAchievementModal } from '@/components/gallery/AddAchievementModal';
 import { AchievementDetailModal } from '@/components/gallery/AchievementDetailModal';
+import { NotificationPanel } from '@/components/notifications/NotificationPanel';
 
 interface SessionStatus {
   authenticated: boolean;
@@ -397,6 +398,9 @@ export default function HomePage() {
 
       {/* Main Gallery Area */}
       <main style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 20px 60px' }}>
+        {/* Web Push Notification Controls (M3) */}
+        <NotificationPanel />
+
         {/* Search & Filter Bar */}
         <div
           style={{

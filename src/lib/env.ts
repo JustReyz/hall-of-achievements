@@ -25,6 +25,10 @@ export const envSchema = z.object({
     .string()
     .optional()
     .transform((val) => (val !== undefined ? val === 'true' : process.env.NODE_ENV === 'production')),
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  VAPID_SUBJECT: z.string().default('mailto:admin@hall-of-achievements.local'),
+  NEXT_PUBLIC_VAPID_PUBLIC_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

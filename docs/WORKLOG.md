@@ -102,3 +102,25 @@ Autonomous execution via `teamwork_preview` multi-agent swarm with varied reason
 - `npm run lint`: 0 warnings, 0 errors.
 - `npm run build`: Exit code 0, all 12 routes generated and optimized.
 - Independent audit: `auditor_m2_it2` verified CLEAN (no dummy implementations, facades, hardcoded outputs, or secret leaks).
+
+## Milestone 3 — Manual Web Push & Strict Notification Boundaries (2026-10-22)
+
+Autonomous execution via `teamwork_preview` multi-agent swarm with varied reasoning models across specification mining, architecture, implementation, adversarial critique, remediation, and forensic auditing.
+
+### Scope and Implementation
+- **R1 Database Schemas & Storage Parity**: Drizzle ORM schemas for `push_subscriptions` and `reminder_attempts` in `src/lib/db/schema.ts` with complete type parity between in-memory PGlite WASM (testing) and Neon PostgreSQL pooled driver (production). Features full status tracking (`active`, `deactivated`), provider endpoint hashing, foreign key relations, and indexes.
+- **R2 Minimal Dedicated Service Worker (`AC6`, `AC7`)**: Minimal service worker in `public/sw.js` handling only `push` and `notificationclick` events. Explicitly contains zero `fetch` event listeners and zero Cache API / offline storage mechanisms, preserving strict private art confidentiality boundaries.
+- **R3 Explicit Click-Only Notification UI (`AC6`, `AC7`)**: UI in `src/components/notifications/NotificationPanel.tsx` enforcing strict click-only boundaries. Passive actions (page navigation, login, artwork saving) never request notification permission or trigger pushes. "Enable notifications on this device" requests browser permission strictly upon explicit user click, captures subscription details, and transmits zero pushes. "Send reminder now" triggers an authenticated, CSRF-protected Web Push attempt with generic lock-screen copy ("New reminder from Hall of Achievements"), 60-second TTL, and a durable 1-minute cooldown per target.
+- **R4 SSRF-Hardened Push Egress Architecture (`AC8`)**: Multi-layered defense-in-depth egress filter in `src/lib/push/egress.ts`. Implements RFC 4291-compliant 8-hextet IPv6 numerical parser, embedded IPv4 address extraction (IPv4-mapped dotted and hex formats, 6to4 prefix `2002::/16`, NAT64 `64:ff9b::/96`), numerical loopback evaluation, private/link-local/multicast IP address blocking, strict provider origin allowlist (FCM, Apple APNs, Mozilla Autopush, Microsoft WNS), URL structure validation (https only, port 443 only, <=2048 chars, no credentials), and DNS rebinding protections via pre-flight address resolution and pinned custom HTTP/HTTPS agent.
+- **R5 Transactional Advisory Locking & Concurrency Serialization (`AC7`)**: PostgreSQL transaction-scoped advisory locking (`pg_advisory_xact_lock(4738881, 1380273486)`) in `src/lib/push/sender.ts` serializing concurrent delivery requests. Pre-commits reminder attempt records before outbound provider network calls to eliminate race conditions between cooldown verification and record insertion. Replays identical attempt outcomes for concurrent requests within cooldown without triggering duplicate network egress.
+- **R6 Inactive Subscription Deactivation (`AC8`)**: Automatic deactivation marking subscriptions as inactive/deactivated upon receiving HTTP 404 or HTTP 410 responses from push provider gateways, preventing wasteful retries and delivery errors.
+- **Credential & Secret Isolation**: `Context7.md` untracked and excluded via `.gitignore`. VAPID keys validated via server-side environment schemas; zero secrets or private keys leaked in client bundles, routes, or test suites.
+
+### Fresh Verification Evidence
+- `npm test`: 21 test files passed, 226 tests passed (100% pass rate).
+- `npx tsc --noEmit`: 0 compiler errors under strict type checking.
+- `npm run lint`: 0 warnings, 0 errors.
+- `npm run build`: Exit code 0, all 15 routes generated and optimized.
+- Adversarial egress challenge suite: 149/149 test vectors passed (`scripts/adversarial-egress-challenge.ts`).
+- Vitest concurrency suite: 16/16 tests passed (`tests/integration/adversarial-push-concurrency.test.ts`) and 9/9 empirical stress checks passed (`scripts/adversarial-concurrency-stress.ts`).
+- Independent audit: `auditor_m3_it2` verified CLEAN (zero facades, genuine logic, untracked `Context7.md`).

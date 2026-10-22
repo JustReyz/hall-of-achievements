@@ -169,3 +169,65 @@ export type InsertAsset = typeof assets.$inferInsert;
 export type UploadIntent = typeof uploadIntents.$inferSelect;
 export type InsertUploadIntent = typeof uploadIntents.$inferInsert;
 
+/**
+ * Web push subscriptions authorized by the authenticated owner.
+ */
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tokenHash: varchar('token_hash', { length: 64 }).notNull(),
+    endpoint: text('endpoint').notNull().unique(),
+    p256dh: text('p256dh').notNull(),
+    auth: text('auth').notNull(),
+    userAgent: text('user_agent'),
+    status: text('status')
+      .$type<'active' | 'disabled'>()
+      .notNull()
+      .default('active'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index('idx_push_subscriptions_status_created').on(table.status, table.createdAt),
+    index('idx_push_subscriptions_token_hash').on(table.tokenHash),
+    index('idx_push_subscriptions_endpoint').on(table.endpoint),
+  ]
+);
+
+/**
+ * Durable ledger for reminder attempts, cooldown enforcement, and idempotency tracking.
+ */
+export const reminderAttempts = pgTable(
+  'reminder_attempts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    idempotencyKey: varchar('idempotency_key', { length: 128 }).notNull().unique(),
+    tokenHash: varchar('token_hash', { length: 64 }).notNull(),
+    targetIds: jsonb('target_ids').$type<string[]>().notNull().default([]),
+    outcome: text('outcome').notNull(),
+    details: jsonb('details').$type<Record<string, unknown>>().notNull().default({}),
+    attemptedAt: timestamp('attempted_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index('idx_reminder_attempts_token_attempted').on(table.tokenHash, table.attemptedAt.desc()),
+    index('idx_reminder_attempts_idempotency').on(table.idempotencyKey),
+    index('idx_reminder_attempts_attempted_at').on(table.attemptedAt.desc()),
+  ]
+);
+
+export type PushSubscriptionRecord = typeof pushSubscriptions.$inferSelect;
+export type InsertPushSubscription = typeof pushSubscriptions.$inferInsert;
+
+export type ReminderAttempt = typeof reminderAttempts.$inferSelect;
+export type InsertReminderAttempt = typeof reminderAttempts.$inferInsert;
+

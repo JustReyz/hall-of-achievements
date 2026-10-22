@@ -1,6 +1,6 @@
-import { sql } from 'drizzle-orm';
+import { sql, eq } from 'drizzle-orm';
 import { getDb } from '../db';
-import { sessions, type Session } from '../db/schema';
+import { sessions, pushSubscriptions, type Session } from '../db/schema';
 import {
   generateSessionToken,
   hashSessionToken,
@@ -189,7 +189,7 @@ export async function validateSession(rawToken: string): Promise<SessionValidati
 }
 
 /**
- * Revokes a single session by its raw token or token hash.
+ * Revokes a single session by its raw token or token hash and disables its device push subscription.
  */
 export async function revokeSession(rawTokenOrHash: string): Promise<boolean> {
   if (!rawTokenOrHash) return false;
@@ -207,11 +207,21 @@ export async function revokeSession(rawTokenOrHash: string): Promise<boolean> {
     .where(sql`${sessions.tokenHash} = ${tokenHash}`)
     .returning();
 
+  // Deactivate any push subscription linked to this session
+  try {
+    await db
+      .update(pushSubscriptions)
+      .set({ status: 'disabled', updatedAt: now })
+      .where(eq(pushSubscriptions.tokenHash, tokenHash));
+  } catch {
+    // Cleanup failure must not prevent session revocation
+  }
+
   return updated.length > 0;
 }
 
 /**
- * Revokes all active sessions across all devices.
+ * Revokes all active sessions across all devices and disables all fleet push subscriptions.
  */
 export async function revokeAllSessions(): Promise<number> {
   const db = await getDb();
@@ -225,6 +235,16 @@ export async function revokeAllSessions(): Promise<number> {
     })
     .where(sql`${sessions.revoked} = FALSE`)
     .returning({ tokenHash: sessions.tokenHash });
+
+  // Fleet revocation: disable all active push subscriptions across all devices
+  try {
+    await db
+      .update(pushSubscriptions)
+      .set({ status: 'disabled', updatedAt: now })
+      .where(eq(pushSubscriptions.status, 'active'));
+  } catch {
+    // Cleanup failure must not prevent session revocation
+  }
 
   return revoked.length;
 }

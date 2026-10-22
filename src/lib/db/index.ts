@@ -133,6 +133,37 @@ export async function initTables(client: {
       CREATE INDEX IF NOT EXISTS idx_upload_intents_status ON upload_intents (status);
       CREATE INDEX IF NOT EXISTS idx_upload_intents_expires ON upload_intents (expires_at);
       CREATE INDEX IF NOT EXISTS idx_upload_intents_token_hash ON upload_intents (token_hash);
+
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        token_hash VARCHAR(64) NOT NULL,
+        endpoint TEXT NOT NULL UNIQUE,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        user_agent TEXT,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_push_subscriptions_status_created ON push_subscriptions (status, created_at);
+      CREATE INDEX IF NOT EXISTS idx_push_subscriptions_token_hash ON push_subscriptions (token_hash);
+      CREATE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint ON push_subscriptions (endpoint);
+
+      CREATE TABLE IF NOT EXISTS reminder_attempts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        idempotency_key VARCHAR(128) NOT NULL UNIQUE,
+        token_hash VARCHAR(64) NOT NULL,
+        target_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+        outcome TEXT NOT NULL,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_reminder_attempts_idempotency ON reminder_attempts (idempotency_key);
+      CREATE INDEX IF NOT EXISTS idx_reminder_attempts_token_attempted ON reminder_attempts (token_hash, attempted_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_reminder_attempts_attempted_at ON reminder_attempts (attempted_at DESC);
     `);
     return;
   }
@@ -215,6 +246,33 @@ export async function initTables(client: {
     `CREATE INDEX IF NOT EXISTS idx_upload_intents_status ON upload_intents (status)`,
     `CREATE INDEX IF NOT EXISTS idx_upload_intents_expires ON upload_intents (expires_at)`,
     `CREATE INDEX IF NOT EXISTS idx_upload_intents_token_hash ON upload_intents (token_hash)`,
+    `CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      token_hash VARCHAR(64) NOT NULL,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      user_agent TEXT,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_push_subscriptions_status_created ON push_subscriptions (status, created_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_push_subscriptions_token_hash ON push_subscriptions (token_hash)`,
+    `CREATE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint ON push_subscriptions (endpoint)`,
+    `CREATE TABLE IF NOT EXISTS reminder_attempts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      idempotency_key VARCHAR(128) NOT NULL UNIQUE,
+      token_hash VARCHAR(64) NOT NULL,
+      target_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      outcome TEXT NOT NULL,
+      details JSONB NOT NULL DEFAULT '{}'::jsonb,
+      attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_reminder_attempts_idempotency ON reminder_attempts (idempotency_key)`,
+    `CREATE INDEX IF NOT EXISTS idx_reminder_attempts_token_attempted ON reminder_attempts (token_hash, attempted_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_reminder_attempts_attempted_at ON reminder_attempts (attempted_at DESC)`,
   ];
 
   for (const stmt of statements) {
