@@ -65,3 +65,21 @@ Before committing, staged-content verification passed for 12 text files: all 16 
 No lint/type/build/browser/runtime/security acceptance results are claimed: there is no application source, package manifest, service worker or deployed site in this checkpoint. PRD performance numbers are proposed budgets, not benchmarks.
 
 Final delivery reports the pushed commit and verifies local HEAD against the remote main SHA. This file cannot contain its own commit hash without changing that hash; the exact final SHA therefore belongs in the delivery message and Git history.
+
+## Milestone 1 — Foundation and Authentication (2026-10-22)
+
+Autonomous execution via `teamwork_preview` multi-agent swarm with varied reasoning models across surveying, implementation, adversarial critique, remediation, and post-victory auditing.
+
+### Scope and Implementation
+- **R1 Foundation & Tooling**: Next.js 15 App Router, React 19, TypeScript 5 (strict mode), ESLint 9, Vitest, and Prettier. Database layer in `src/lib/db/` using Drizzle ORM with dual database support (Neon PostgreSQL pooled driver in production, in-memory PGlite WASM engine for hermetic local testing). Idempotent migration runner with PostgreSQL advisory locks (`pg_advisory_lock`).
+- **R2 Secure Authentication (`AC1`, `AC9`)**: Constant-time comparison with SHA-256 pre-hashing before `crypto.timingSafeEqual` against server-only `OWNER_ACCESS_CODE`. 256-bit CSPRNG session tokens stored strictly as SHA-256 hashes (`sessions.token_hash`). Delivered via HTTPS `__Host-` cookies (`Secure`, `HttpOnly`, `SameSite=Strict`, `Path=/`, no Domain) with localhost fallback. Strict origin-matching CSRF protection.
+- **R3 Durable Rate Limiting (`AC2`)**: Atomic PostgreSQL UPSERT rate limiting enforcing 5 failed attempts per 15-minute window per salted HMAC client IP hash. Trusted proxy headers (`x-vercel-forwarded-for` > `x-real-ip` > `cf-connecting-ip`) prevent client-spoofed bypasses. Fail-closed architecture returns HTTP 503 during database outage without leaking tokens.
+- **R4 Session Lifecycle & Shared AuthState Rotation (`AC9`)**: 24-hour sliding idle timeout, 7-day immutable absolute timeout, and LRU eviction enforcing a maximum of 5 active sessions. Shared `AuthState` HMAC rotation invalidates prior sessions fleet-wide. Stale container defense-in-depth returns HTTP 503 if an instance's in-memory secrets desynchronize from the shared active version.
+- **Credential & Secret Isolation**: `Context7.md` untracked and excluded via `.gitignore`. Zero secrets in bundles, client payloads, or logs.
+
+### Fresh Verification Evidence
+- `npm test`: 8/8 test files passed, 81/81 tests passed (100% pass rate).
+- `npx tsc --noEmit`: 0 compiler errors under strict type checking.
+- `npm run lint`: 0 warnings, 0 errors.
+- `npm run build`: Exit code 0, all 7 pages/routes compiled and optimized.
+- Independent victory auditor: `teamwork_preview_victory_auditor` verified authentic cryptography, genuine Drizzle queries, and fail-closed security properties. Outcome: **VICTORY CONFIRMED**.
