@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, type FormEvent } from 'react';
+import { useState, useEffect, useRef, type FormEvent } from 'react';
 import { AchievementItem } from './types';
 
 interface AchievementDetailModalProps {
@@ -76,16 +76,68 @@ export function AchievementDetailModal({
     };
   }, [achievement]);
 
-  // Handle ESC key to close
+  const detailModalRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+
   useEffect(() => {
+    if (!achievement) {
+      if (triggerRef.current && typeof triggerRef.current.focus === 'function') {
+        triggerRef.current.focus();
+      }
+      return;
+    }
+
+    triggerRef.current = document.activeElement as HTMLElement;
+
+    const timer = setTimeout(() => {
+      if (detailModalRef.current) {
+        const focusables = detailModalRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        const first = focusables[0];
+        if (first) {
+          first.focus();
+        }
+      }
+    }, 50);
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        e.preventDefault();
         onClose();
+        return;
+      }
+
+      if (e.key === 'Tab' && detailModalRef.current) {
+        const focusables = detailModalRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+
+        if (first && last) {
+          if (e.shiftKey) {
+            if (document.activeElement === first) {
+              e.preventDefault();
+              last.focus();
+            }
+          } else {
+            if (document.activeElement === last) {
+              e.preventDefault();
+              first.focus();
+            }
+          }
+        }
       }
     };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [achievement, onClose]);
 
   if (!achievement) return null;
 
@@ -205,6 +257,7 @@ export function AchievementDetailModal({
       }}
     >
       <div
+        ref={detailModalRef}
         style={{
           backgroundColor: '#fff',
           borderRadius: 12,
@@ -252,7 +305,12 @@ export function AchievementDetailModal({
               fontSize: '22px',
               cursor: 'pointer',
               color: '#64748b',
-              padding: 4,
+              padding: 8,
+              minWidth: 44,
+              minHeight: 44,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
             ✕
@@ -300,6 +358,7 @@ export function AchievementDetailModal({
               <img
                 src={displayUrl}
                 alt={achievement.title}
+                decoding="async"
                 style={{
                   maxWidth: '100%',
                   maxHeight: 520,

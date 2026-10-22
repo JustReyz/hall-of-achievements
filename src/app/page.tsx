@@ -240,6 +240,8 @@ export default function HomePage() {
                 autoFocus
                 required
                 disabled={authLoading}
+                aria-invalid={Boolean(authMessage)}
+                aria-describedby={authMessage ? 'auth-error' : undefined}
                 style={{
                   width: '100%',
                   boxSizing: 'border-box',
@@ -247,7 +249,7 @@ export default function HomePage() {
                   borderRadius: 6,
                   border: '1px solid #cbd5e1',
                   fontSize: '15px',
-                  outline: 'none',
+                  minHeight: 44,
                 }}
               />
             </div>
@@ -258,6 +260,7 @@ export default function HomePage() {
               style={{
                 width: '100%',
                 padding: '11px 16px',
+                minHeight: 44,
                 backgroundColor: '#2563eb',
                 color: '#fff',
                 border: 'none',
@@ -274,6 +277,7 @@ export default function HomePage() {
 
           {authMessage && (
             <div
+              id="auth-error"
               role="alert"
               style={{
                 marginTop: 16,
@@ -337,10 +341,11 @@ export default function HomePage() {
           </div>
 
           {/* Controls: Quota, Add button, Logout */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <nav aria-label="Archive actions" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             {/* Storage Quota Badge */}
             {quota && (
               <div
+                role="status"
                 title={`Accounted: ${usageMb} MB of ${ceilingMb} MB (70% safe provider ceiling)`}
                 style={{
                   fontSize: '12px',
@@ -363,7 +368,8 @@ export default function HomePage() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
-                padding: '8px 16px',
+                padding: '10px 16px',
+                minHeight: 44,
                 backgroundColor: '#2563eb',
                 color: '#fff',
                 border: 'none',
@@ -380,7 +386,8 @@ export default function HomePage() {
               type="button"
               onClick={() => void handleLogout()}
               style={{
-                padding: '8px 14px',
+                padding: '10px 14px',
+                minHeight: 44,
                 backgroundColor: '#fff',
                 color: '#475569',
                 border: '1px solid #cbd5e1',
@@ -392,7 +399,7 @@ export default function HomePage() {
             >
               Log Out
             </button>
-          </div>
+          </nav>
         </div>
       </header>
 

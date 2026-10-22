@@ -11,7 +11,9 @@
     "test": "vitest run --fileParallelism=false",
     "test:watch": "vitest --fileParallelism=false",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx src/lib/db/migrate.ts"
+    "db:migrate": "tsx src/lib/db/migrate.ts",
+    "export": "tsx scripts/export.ts",
+    "restore": "tsx scripts/restore.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.11",

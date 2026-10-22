@@ -21,5 +21,9 @@ coverage/
 *.db
 *.log
 
+# Operational CLI exports and backups
+export-*/
+export-*.tar.gz
+
 # Existing empty local file; preserved without publishing.
 0.26.0

@@ -364,7 +364,7 @@ export function NotificationPanel() {
                 fontSize: '13px',
                 color: '#334155',
                 backgroundColor: '#fff',
-                outline: 'none',
+                minHeight: 44,
               }}
             >
               <option value="all">All active devices ({subscriptions.length})</option>
@@ -385,7 +385,8 @@ export function NotificationPanel() {
             disabled={subscriptions.length === 0 || cooldownRemaining > 0 || loading}
             aria-label="Send reminder now"
             style={{
-              padding: '7px 14px',
+              padding: '10px 16px',
+              minHeight: 44,
               backgroundColor: subscriptions.length === 0 || cooldownRemaining > 0 ? '#94a3b8' : '#2563eb',
               color: '#fff',
               border: 'none',
@@ -414,7 +415,8 @@ export function NotificationPanel() {
               disabled={loading || permission === 'denied' || isSupported === false}
               aria-label="Enable notifications on this device"
               style={{
-                padding: '7px 14px',
+                padding: '10px 16px',
+                minHeight: 44,
                 backgroundColor: '#fff',
                 color: '#2563eb',
                 border: '1px solid #2563eb',
@@ -434,7 +436,8 @@ export function NotificationPanel() {
               disabled={loading}
               aria-label="Disable notifications on this device"
               style={{
-                padding: '7px 12px',
+                padding: '10px 16px',
+                minHeight: 44,
                 backgroundColor: '#fff',
                 color: '#64748b',
                 border: '1px solid #cbd5e1',

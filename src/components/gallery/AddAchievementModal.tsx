@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, type FormEvent, type ChangeEvent } from 'react';
+import { useState, useRef, useEffect, useCallback, type FormEvent, type ChangeEvent } from 'react';
 import { AchievementItem } from './types';
 
 interface AddAchievementModalProps {
@@ -30,8 +30,8 @@ export function AddAchievementModal({ isOpen, onClose, onSuccess }: AddAchieveme
   const [error, setError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  if (!isOpen) return null;
+  const modalRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     setError(null);
@@ -165,7 +165,7 @@ export function AddAchievementModal({ isOpen, onClose, onSuccess }: AddAchieveme
     }
   };
 
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     if (uploading) return;
     setFile(null);
     if (previewUrl) {
@@ -177,7 +177,69 @@ export function AddAchievementModal({ isOpen, onClose, onSuccess }: AddAchieveme
     setTagsInput('');
     setError(null);
     onClose();
-  };
+  }, [uploading, previewUrl, onClose]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      if (triggerRef.current && typeof triggerRef.current.focus === 'function') {
+        triggerRef.current.focus();
+      }
+      return;
+    }
+
+    triggerRef.current = document.activeElement as HTMLElement;
+
+    const timer = setTimeout(() => {
+      if (modalRef.current) {
+        const focusables = modalRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        const first = focusables[0];
+        if (first) {
+          first.focus();
+        }
+      }
+    }, 50);
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        handleClose();
+        return;
+      }
+
+      if (e.key === 'Tab' && modalRef.current) {
+        const focusables = modalRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+
+        if (first && last) {
+          if (e.shiftKey) {
+            if (document.activeElement === first) {
+              e.preventDefault();
+              last.focus();
+            }
+          } else {
+            if (document.activeElement === last) {
+              e.preventDefault();
+              first.focus();
+            }
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, handleClose]);
+
+  if (!isOpen) return null;
 
   return (
     <div
@@ -200,6 +262,7 @@ export function AddAchievementModal({ isOpen, onClose, onSuccess }: AddAchieveme
       }}
     >
       <div
+        ref={modalRef}
         style={{
           backgroundColor: '#fff',
           borderRadius: 12,
@@ -226,7 +289,12 @@ export function AddAchievementModal({ isOpen, onClose, onSuccess }: AddAchieveme
               fontSize: '20px',
               cursor: 'pointer',
               color: '#64748b',
-              padding: 4,
+              padding: 8,
+              minWidth: 44,
+              minHeight: 44,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
             ✕
@@ -253,10 +321,14 @@ export function AddAchievementModal({ isOpen, onClose, onSuccess }: AddAchieveme
         <form onSubmit={(e) => void handleSubmit(e)}>
           {/* File Picker */}
           <div style={{ marginBottom: 18 }}>
-            <label style={{ display: 'block', fontWeight: 600, fontSize: '14px', color: '#334155', marginBottom: 6 }}>
+            <label
+              htmlFor="achievement-file-input"
+              style={{ display: 'block', fontWeight: 600, fontSize: '14px', color: '#334155', marginBottom: 6 }}
+            >
               Artwork File (JPEG, PNG, WebP — max 10 MiB, &le; 20 MP) *
             </label>
             <input
+              id="achievement-file-input"
               ref={fileInputRef}
               type="file"
               accept="image/jpeg,image/png,image/webp"

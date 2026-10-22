@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from 'next/server';
+import { type NextRequest } from 'next/server';
 import { verifyOwnerAccessCode } from '@/lib/auth/crypto';
 import {
   serializeSessionCookie,
@@ -17,6 +17,7 @@ import {
   recordFailedAttempt,
 } from '@/lib/security/rate-limit';
 import { validateCsrf } from '@/lib/security/csrf';
+import { jsonResponse } from '@/lib/auth/api-guard';
 
 /**
  * POST /api/session - Secure Owner Authentication & Session Issuance
@@ -25,7 +26,7 @@ export async function POST(request: NextRequest) {
   // 1. CSRF & Origin Validation
   const csrf = validateCsrf(request);
   if (!csrf.valid) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    return jsonResponse({ error: 'Forbidden' }, { status: 403 });
   }
 
   // 2. Extract trusted client IP
@@ -36,7 +37,7 @@ export async function POST(request: NextRequest) {
     const instanceStatus = await verifyInstanceAuthState();
     if (!instanceStatus.valid) {
       console.error('[SECURITY FATAL] Stale instance detected during login attempt: local HMAC does not match DB auth_state');
-      return NextResponse.json(
+      return jsonResponse(
         { error: 'Authentication service unavailable' },
         { status: 503 }
       );
@@ -45,7 +46,7 @@ export async function POST(request: NextRequest) {
     // 4. Pre-auth rate limit check
     const limitStatus = await checkRateLimit(ip);
     if (!limitStatus.allowed) {
-      return NextResponse.json(
+      return jsonResponse(
         {
           error: 'Too many failed attempts. Please try again later.',
           retryAfter: limitStatus.retryAfterSeconds,
@@ -66,11 +67,11 @@ export async function POST(request: NextRequest) {
     try {
       body = await request.json();
     } catch {
-      return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+      return jsonResponse({ error: 'Invalid request' }, { status: 400 });
     }
 
     if (!body || typeof body !== 'object' || !('code' in body)) {
-      return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+      return jsonResponse({ error: 'Invalid request' }, { status: 400 });
     }
 
     const inputCode = (body as { code: unknown }).code;
@@ -83,7 +84,7 @@ export async function POST(request: NextRequest) {
       const updatedLimit = await recordFailedAttempt(ip);
 
       if (!updatedLimit.allowed) {
-        return NextResponse.json(
+        return jsonResponse(
           {
             error: 'Too many failed attempts. Please try again later.',
             retryAfter: updatedLimit.retryAfterSeconds,
@@ -99,7 +100,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      return NextResponse.json(
+      return jsonResponse(
         { error: 'Invalid access code' },
         {
           status: 401,
@@ -115,7 +116,7 @@ export async function POST(request: NextRequest) {
     const { rawToken } = await createSession();
     const cookie = serializeSessionCookie(rawToken);
 
-    const response = NextResponse.json(
+    const response = jsonResponse(
       { authenticated: true },
       { status: 200 }
     );
@@ -124,7 +125,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('[AUTH ERROR] Internal failure during login:', error);
     // Strict fail-closed policy: deny login with 503
-    return NextResponse.json(
+    return jsonResponse(
       { error: 'Authentication service unavailable' },
       { status: 503 }
     );
@@ -138,7 +139,7 @@ export async function GET(request: NextRequest) {
   const token = extractSessionToken(request);
 
   if (!token) {
-    return NextResponse.json(
+    return jsonResponse(
       { authenticated: false, error: 'Unauthorized' },
       { status: 401 }
     );
@@ -149,7 +150,7 @@ export async function GET(request: NextRequest) {
 
     if (!result.valid || !result.session) {
       const clearCookie = serializeClearCookie();
-      const response = NextResponse.json(
+      const response = jsonResponse(
         { authenticated: false, error: 'Unauthorized' },
         { status: 401 }
       );
@@ -157,7 +158,7 @@ export async function GET(request: NextRequest) {
       return response;
     }
 
-    return NextResponse.json(
+    return jsonResponse(
       {
         authenticated: true,
         session: {
@@ -169,7 +170,7 @@ export async function GET(request: NextRequest) {
     );
   } catch (error) {
     console.error('[AUTH ERROR] Internal failure checking session:', error);
-    return NextResponse.json(
+    return jsonResponse(
       { error: 'Authentication service unavailable' },
       { status: 503 }
     );
@@ -183,26 +184,26 @@ export async function DELETE(request: NextRequest) {
   // CSRF validation
   const csrf = validateCsrf(request);
   if (!csrf.valid) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    return jsonResponse({ error: 'Forbidden' }, { status: 403 });
   }
 
   const token = extractSessionToken(request);
   const clearCookie = serializeClearCookie();
 
   if (!token) {
-    const response = NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const response = jsonResponse({ error: 'Unauthorized' }, { status: 401 });
     response.headers.append('Set-Cookie', clearCookie.headerValue);
     return response;
   }
 
   try {
     await revokeSession(token);
-    const response = NextResponse.json({ success: true }, { status: 200 });
+    const response = jsonResponse({ success: true }, { status: 200 });
     response.headers.append('Set-Cookie', clearCookie.headerValue);
     return response;
   } catch (error) {
     console.error('[AUTH ERROR] Internal failure revoking session:', error);
-    return NextResponse.json(
+    return jsonResponse(
       { error: 'Authentication service unavailable' },
       { status: 503 }
     );

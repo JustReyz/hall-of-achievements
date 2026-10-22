@@ -47,7 +47,7 @@ export function SearchBar({ onSearch, disabled }: SearchBarProps) {
         style={{
           width: '100%',
           boxSizing: 'border-box',
-          padding: '10px 36px 10px 14px',
+          padding: '10px 44px 10px 14px',
           borderRadius: 8,
           border: '1px solid #cbd5e1',
           fontSize: '15px',
@@ -72,7 +72,7 @@ export function SearchBar({ onSearch, disabled }: SearchBarProps) {
           aria-label="Clear search"
           style={{
             position: 'absolute',
-            right: 10,
+            right: 0,
             top: '50%',
             transform: 'translateY(-50%)',
             background: 'none',
@@ -80,8 +80,10 @@ export function SearchBar({ onSearch, disabled }: SearchBarProps) {
             cursor: 'pointer',
             fontSize: '16px',
             color: '#64748b',
-            padding: 4,
-            display: 'flex',
+            padding: 8,
+            minWidth: 44,
+            minHeight: 44,
+            display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
           }}

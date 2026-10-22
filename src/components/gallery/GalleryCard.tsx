@@ -95,13 +95,16 @@ export function GalleryCard({ achievement, onClick }: GalleryCardProps) {
         }}
       >
         {imageLoading && (
-          <div style={{ color: '#94a3b8', fontSize: '13px' }}>Loading...</div>
+          <div style={{ color: '#475569', fontSize: '13px' }}>Loading...</div>
         )}
         {!imageLoading && thumbUrl && (
           <img
             src={thumbUrl}
             alt={achievement.title}
             loading="lazy"
+            decoding="async"
+            width={400}
+            height={300}
             style={{
               width: '100%',
               height: '100%',
@@ -110,7 +113,7 @@ export function GalleryCard({ achievement, onClick }: GalleryCardProps) {
           />
         )}
         {!imageLoading && !thumbUrl && (
-          <div style={{ color: '#94a3b8', fontSize: '28px' }}>🎨</div>
+          <div style={{ color: '#475569', fontSize: '28px' }}>🎨</div>
         )}
       </div>
 
@@ -130,7 +133,7 @@ export function GalleryCard({ achievement, onClick }: GalleryCardProps) {
           {achievement.title}
         </h3>
 
-        <div style={{ fontSize: '13px', color: '#64748b', marginBottom: 10 }}>
+        <div style={{ fontSize: '13px', color: '#475569', marginBottom: 10 }}>
           {achievement.completionDate}
         </div>
 
@@ -153,7 +156,7 @@ export function GalleryCard({ achievement, onClick }: GalleryCardProps) {
               </span>
             ))}
             {achievement.tags.length > 3 && (
-              <span style={{ fontSize: '11px', color: '#94a3b8', alignSelf: 'center' }}>
+              <span style={{ fontSize: '11px', color: '#475569', alignSelf: 'center' }}>
                 +{achievement.tags.length - 3}
               </span>
             )}
