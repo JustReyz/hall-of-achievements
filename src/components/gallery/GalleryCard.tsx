@@ -11,10 +11,10 @@ interface GalleryCardProps {
 export function GalleryCard({ achievement, onClick }: GalleryCardProps) {
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [imageLoading, setImageLoading] = useState(true);
+  const [assetFailed, setAssetFailed] = useState(false);
 
   useEffect(() => {
     let isCancelled = false;
-    setImageLoading(true);
 
     async function loadThumb() {
       try {
@@ -23,12 +23,18 @@ export function GalleryCard({ achievement, onClick }: GalleryCardProps) {
           const data = (await res.json()) as { url?: string };
           if (!isCancelled && data.url) {
             setThumbUrl(data.url);
+            return;
           }
         }
+        if (!isCancelled) {
+          setAssetFailed(true);
+          setImageLoading(false);
+        }
       } catch {
-        // Thumbnail load error
-      } finally {
-        if (!isCancelled) setImageLoading(false);
+        if (!isCancelled) {
+          setAssetFailed(true);
+          setImageLoading(false);
+        }
       }
     }
 
@@ -95,9 +101,22 @@ export function GalleryCard({ achievement, onClick }: GalleryCardProps) {
         }}
       >
         {imageLoading && (
-          <div style={{ color: '#475569', fontSize: '13px' }}>Loading...</div>
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#64748b',
+              fontSize: '13px',
+              backgroundColor: '#f1f5f9',
+            }}
+          >
+            Loading...
+          </div>
         )}
-        {!imageLoading && thumbUrl && (
+        {thumbUrl && (
           <img
             src={thumbUrl}
             alt={achievement.title}
@@ -105,14 +124,21 @@ export function GalleryCard({ achievement, onClick }: GalleryCardProps) {
             decoding="async"
             width={400}
             height={300}
+            onLoad={() => setImageLoading(false)}
+            onError={() => {
+              setImageLoading(false);
+              setAssetFailed(true);
+            }}
             style={{
               width: '100%',
               height: '100%',
               objectFit: 'cover',
+              opacity: imageLoading ? 0 : 1,
+              transition: 'opacity 0.2s ease',
             }}
           />
         )}
-        {!imageLoading && !thumbUrl && (
+        {assetFailed && !thumbUrl && (
           <div style={{ color: '#475569', fontSize: '28px' }}>🎨</div>
         )}
       </div>

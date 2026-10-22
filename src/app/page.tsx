@@ -118,10 +118,13 @@ export default function HomePage() {
   }, [checkSession, fetchAchievements, fetchQuota]);
 
   // Handle Search input from SearchBar
-  const handleSearch = (q: string) => {
-    setSearchQuery(q);
-    void fetchAchievements(q);
-  };
+  const handleSearch = useCallback(
+    (q: string) => {
+      setSearchQuery(q);
+      void fetchAchievements(q);
+    },
+    [fetchAchievements]
+  );
 
   // Handle Login
   const handleLogin = async (e: FormEvent) => {

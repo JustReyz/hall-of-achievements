@@ -132,7 +132,7 @@ export function GalleryGrid({
           />
         ))}
 
-        {loading && renderSkeletons(items.length === 0 ? 8 : 4)}
+        {loading && items.length === 0 && renderSkeletons(8)}
       </div>
 
       {/* Pagination Controls */}

@@ -10,14 +10,25 @@ interface SearchBarProps {
 export function SearchBar({ onSearch, disabled }: SearchBarProps) {
   const [value, setValue] = useState('');
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isFirstRender = useRef(true);
+  const onSearchRef = useRef(onSearch);
 
   useEffect(() => {
+    onSearchRef.current = onSearch;
+  }, [onSearch]);
+
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
     }
 
     timeoutRef.current = setTimeout(() => {
-      onSearch(value.trim());
+      onSearchRef.current(value.trim());
     }, 300);
 
     return () => {
@@ -25,7 +36,7 @@ export function SearchBar({ onSearch, disabled }: SearchBarProps) {
         clearTimeout(timeoutRef.current);
       }
     };
-  }, [value, onSearch]);
+  }, [value]);
 
   const handleClear = () => {
     setValue('');
