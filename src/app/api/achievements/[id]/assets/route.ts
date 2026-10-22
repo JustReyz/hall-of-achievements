@@ -1,5 +1,5 @@
 import { type NextRequest } from 'next/server';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import { authenticateApiRequest, jsonError, jsonResponse } from '@/lib/auth/api-guard';
 import { getDb } from '@/lib/db';
 import { achievements, assets } from '@/lib/db/schema';
@@ -54,7 +54,9 @@ export async function GET(
     const assetRows = await db
       .select()
       .from(assets)
-      .where(eq(assets.achievementId, id));
+      .where(eq(assets.achievementId, id))
+      .orderBy(desc(assets.createdAt))
+      .limit(1);
 
     const asset = assetRows[0];
     if (!asset) {

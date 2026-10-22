@@ -1,7 +1,10 @@
 'use client';
 
-import { useState, useEffect, useRef, type FormEvent } from 'react';
+import { useState, useEffect, useRef, type ChangeEvent, type FormEvent } from 'react';
 import { AchievementItem } from './types';
+
+const RESTORE_MAX_BYTES = 10 * 1024 * 1024; // 10 MiB, matches the upload pipeline
+const RESTORE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 interface AchievementDetailModalProps {
   achievement: AchievementItem | null;
@@ -18,6 +21,8 @@ export function AchievementDetailModal({
 }: AchievementDetailModalProps) {
   const [displayUrl, setDisplayUrl] = useState<string | null>(null);
   const [imageLoading, setImageLoading] = useState(false);
+  const [imageError, setImageError] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
   // Edit mode state
@@ -48,6 +53,8 @@ export function AchievementDetailModal({
     // Fetch short-lived signed display URL
     let isCancelled = false;
     setImageLoading(true);
+    setImageError(false);
+    setDisplayUrl(null);
 
     async function loadDisplayAsset() {
       try {
@@ -77,6 +84,7 @@ export function AchievementDetailModal({
   }, [achievement]);
 
   const detailModalRef = useRef<HTMLDivElement>(null);
+  const restoreInputRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -236,6 +244,79 @@ export function AchievementDetailModal({
     }
   };
 
+  const handleRestoreFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    if (!RESTORE_MIME_TYPES.includes(file.type)) {
+      setError('Only JPEG, PNG, and WebP images can be restored.');
+      return;
+    }
+    if (file.size > RESTORE_MAX_BYTES) {
+      setError(
+        `File size (${(file.size / 1024 / 1024).toFixed(1)} MiB) exceeds the 10 MiB limit.`
+      );
+      return;
+    }
+
+    setRestoring(true);
+    setError(null);
+
+    try {
+      const intentRes = await fetch('/api/uploads/intents', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify({ fileName: file.name, mimeType: file.type, fileSize: file.size }),
+      });
+      const intentData = (await intentRes.json()) as {
+        intentId?: string;
+        uploadUrl?: string;
+        error?: string;
+      };
+      if (!intentRes.ok || !intentData.intentId || !intentData.uploadUrl) {
+        throw new Error(intentData.error || 'Failed to start the restore upload');
+      }
+
+      const uploadRes = await fetch(intentData.uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type },
+        body: file,
+      });
+      if (!uploadRes.ok) {
+        throw new Error('Failed to upload the replacement image');
+      }
+
+      const finalizeRes = await fetch(`/api/uploads/${intentData.intentId}/finalize`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify({ achievementId: achievement.id }),
+      });
+      const finalizeData = (await finalizeRes.json()) as {
+        finalized?: boolean;
+        achievement?: AchievementItem;
+        asset?: NonNullable<AchievementItem['asset']>;
+        error?: string;
+      };
+      if (!finalizeRes.ok || !finalizeData.finalized || !finalizeData.achievement) {
+        throw new Error(finalizeData.error || 'Failed to restore the artwork');
+      }
+
+      // Reopening the record re-resolves the signed URL from the new asset.
+      onUpdate({ ...finalizeData.achievement, asset: finalizeData.asset ?? achievement.asset ?? null });
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to restore artwork');
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   return (
     <div
       role="dialog"
@@ -354,11 +435,15 @@ export function AchievementDetailModal({
             {imageLoading && (
               <div style={{ color: '#94a3b8', fontSize: '15px' }}>Loading artwork...</div>
             )}
-            {!imageLoading && displayUrl && (
+            {!imageLoading && displayUrl && !imageError && (
               <img
                 src={displayUrl}
                 alt={achievement.title}
                 decoding="async"
+                onError={() => {
+                  setDisplayUrl(null);
+                  setImageError(true);
+                }}
                 style={{
                   maxWidth: '100%',
                   maxHeight: 520,
@@ -366,8 +451,57 @@ export function AchievementDetailModal({
                 }}
               />
             )}
-            {!imageLoading && !displayUrl && (
-              <div style={{ color: '#ef4444', fontSize: '14px' }}>Unable to display image</div>
+            {!imageLoading && (imageError || !displayUrl) && (
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 10,
+                  padding: 24,
+                  textAlign: 'center',
+                }}
+              >
+                <span aria-hidden="true" style={{ fontSize: '36px' }}>
+                  🖼️
+                </span>
+                <div style={{ color: '#e2e8f0', fontSize: '16px', fontWeight: 600 }}>
+                  Preview unavailable
+                </div>
+                <p style={{ margin: 0, color: '#94a3b8', fontSize: '13px', maxWidth: 340, lineHeight: 1.5 }}>
+                  The artwork preview couldn&apos;t be loaded. If the stored file was lost,
+                  re-attach the original to restore it. The title, date, notes and tags stay
+                  unchanged.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => restoreInputRef.current?.click()}
+                  disabled={restoring}
+                  style={{
+                    padding: '10px 18px',
+                    minHeight: 44,
+                    backgroundColor: '#2563eb',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 6,
+                    fontWeight: 600,
+                    fontSize: '14px',
+                    cursor: restoring ? 'not-allowed' : 'pointer',
+                    opacity: restoring ? 0.7 : 1,
+                  }}
+                >
+                  {restoring ? 'Restoring artwork...' : '📎 Restore artwork'}
+                </button>
+                <input
+                  ref={restoreInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={(e) => void handleRestoreFile(e)}
+                  disabled={restoring}
+                  style={{ display: 'none' }}
+                />
+              </div>
             )}
           </div>
 

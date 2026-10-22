@@ -191,6 +191,93 @@ describe('Integration: Two-Phase Direct Upload & Finalization Protocol', () => {
     expect(allAchievements.length).toBe(1);
   });
 
+
+  it('replaces the artwork of an existing achievement without duplicating assets', async () => {
+    const { headers } = await createAuthenticatedHeaders();
+    const storage = getStorage() as MemoryStorageAdapter;
+    const jpegBuffer = await createTestJpeg(400, 300);
+
+    // 1. Create the achievement with an initial image
+    const firstIntentRes = await intentHandler(
+      new NextRequest('http://localhost:3000/api/uploads/intents', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ fileName: 'first.jpg', mimeType: 'image/jpeg', fileSize: jpegBuffer.length }),
+      })
+    );
+    const firstIntent = (await firstIntentRes.json()) as { intentId: string; quarantineKey: string };
+    await storage.putObject(firstIntent.quarantineKey, jpegBuffer, { contentType: 'image/jpeg' });
+
+    const firstFinalizeRes = await finalizeHandler(
+      new NextRequest(`http://localhost:3000/api/uploads/${firstIntent.intentId}/finalize`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ title: 'Restored Piece', completionDate: '2026-10-22', tags: ['repair'] }),
+      }),
+      { params: Promise.resolve({ id: firstIntent.intentId }) }
+    );
+    expect(firstFinalizeRes.status).toBe(200);
+    const firstFinalize = (await firstFinalizeRes.json()) as { achievement: { id: string } };
+    const achievementId = firstFinalize.achievement.id;
+
+    const db = await getDb();
+    const [oldAsset] = await db.select().from(assets).where(eq(assets.achievementId, achievementId));
+    expect(oldAsset).toBeTruthy();
+    expect(storage.hasObject(oldAsset!.originalKey)).toBe(true);
+
+    // 2. Re-attach a different image (different format, so the original key changes)
+    const pngBuffer = await createTestPng(300, 200);
+    const secondIntentRes = await intentHandler(
+      new NextRequest('http://localhost:3000/api/uploads/intents', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ fileName: 'replacement.png', mimeType: 'image/png', fileSize: pngBuffer.length }),
+      })
+    );
+    const secondIntent = (await secondIntentRes.json()) as { intentId: string; quarantineKey: string };
+    await storage.putObject(secondIntent.quarantineKey, pngBuffer, { contentType: 'image/png' });
+
+    const replaceRes = await finalizeHandler(
+      new NextRequest(`http://localhost:3000/api/uploads/${secondIntent.intentId}/finalize`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ achievementId }),
+      }),
+      { params: Promise.resolve({ id: secondIntent.intentId }) }
+    );
+    expect(replaceRes.status).toBe(200);
+    const replaceData = (await replaceRes.json()) as {
+      finalized: boolean;
+      achievement: { id: string; title: string; state: string };
+      asset: { width: number; height: number };
+    };
+    expect(replaceData.finalized).toBe(true);
+    expect(replaceData.achievement.id).toBe(achievementId);
+    expect(replaceData.achievement.state).toBe('ready');
+    expect(replaceData.asset.width).toBe(300);
+    expect(replaceData.asset.height).toBe(200);
+
+    // 3. Metadata is preserved and exactly one asset row remains
+    const [updatedAchievement] = await db
+      .select()
+      .from(achievements)
+      .where(eq(achievements.id, achievementId));
+    expect(updatedAchievement?.title).toBe('Restored Piece');
+    expect(updatedAchievement?.tags).toEqual(['repair']);
+
+    const replacementAssets = await db.select().from(assets).where(eq(assets.achievementId, achievementId));
+    expect(replacementAssets.length).toBe(1);
+    const newAsset = replacementAssets[0]!;
+    expect(newAsset.originalKey).toContain('original.png');
+    expect(newAsset.width).toBe(300);
+
+    // 4. The new objects are readable and the stale original was reclaimed
+    expect(storage.hasObject(newAsset.originalKey)).toBe(true);
+    expect(storage.hasObject(newAsset.displayKey)).toBe(true);
+    expect(storage.hasObject(newAsset.thumbnailKey)).toBe(true);
+    expect(storage.hasObject(oldAsset!.originalKey)).toBe(false);
+  });
+
   it('rejects finalization of an expired upload intent with HTTP 410', async () => {
     const { headers } = await createAuthenticatedHeaders();
     const db = await getDb();

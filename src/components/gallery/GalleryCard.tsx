@@ -11,10 +11,16 @@ interface GalleryCardProps {
 export function GalleryCard({ achievement, onClick }: GalleryCardProps) {
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [imageLoading, setImageLoading] = useState(true);
-  const [assetFailed, setAssetFailed] = useState(false);
+  const [imageFailed, setImageFailed] = useState(false);
 
+  // Re-resolve the signed URL whenever the artwork changes (for example after a
+  // missing image is restored from the detail modal).
   useEffect(() => {
     let isCancelled = false;
+
+    setThumbUrl(null);
+    setImageFailed(false);
+    setImageLoading(true);
 
     async function loadThumb() {
       try {
@@ -27,12 +33,12 @@ export function GalleryCard({ achievement, onClick }: GalleryCardProps) {
           }
         }
         if (!isCancelled) {
-          setAssetFailed(true);
+          setImageFailed(true);
           setImageLoading(false);
         }
       } catch {
         if (!isCancelled) {
-          setAssetFailed(true);
+          setImageFailed(true);
           setImageLoading(false);
         }
       }
@@ -43,7 +49,7 @@ export function GalleryCard({ achievement, onClick }: GalleryCardProps) {
     return () => {
       isCancelled = true;
     };
-  }, [achievement.id]);
+  }, [achievement.id, achievement.updatedAt]);
 
   return (
     <article
@@ -116,18 +122,22 @@ export function GalleryCard({ achievement, onClick }: GalleryCardProps) {
             Loading...
           </div>
         )}
-        {thumbUrl && (
+        {thumbUrl && !imageFailed && (
           <img
             src={thumbUrl}
-            alt={achievement.title}
+            alt=""
+            aria-hidden="true"
             loading="lazy"
             decoding="async"
             width={400}
             height={300}
             onLoad={() => setImageLoading(false)}
             onError={() => {
+              // A broken <img> would render the browser's broken-image glyph and
+              // the alt text across the card. Drop it and show our own state.
+              setThumbUrl(null);
+              setImageFailed(true);
               setImageLoading(false);
-              setAssetFailed(true);
             }}
             style={{
               width: '100%',
@@ -138,8 +148,28 @@ export function GalleryCard({ achievement, onClick }: GalleryCardProps) {
             }}
           />
         )}
-        {assetFailed && !thumbUrl && (
-          <div style={{ color: '#475569', fontSize: '28px' }}>🎨</div>
+        {!imageLoading && (imageFailed || !thumbUrl) && (
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              color: '#64748b',
+              fontSize: '12px',
+              textAlign: 'center',
+              padding: '0 16px',
+            }}
+          >
+            <span aria-hidden="true" style={{ fontSize: '28px' }}>
+              🖼️
+            </span>
+            <span>Preview unavailable</span>
+            <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+              Open to restore the image
+            </span>
+          </div>
         )}
       </div>
 
