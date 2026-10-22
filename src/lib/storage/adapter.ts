@@ -24,7 +24,7 @@ export interface SignedDownloadUrlResult {
 }
 
 export interface StorageAdapter {
-  readonly providerName: 'memory' | 'supabase';
+  readonly providerName: 'memory' | 'supabase' | 'postgres';
 
   putObject(
     key: string,

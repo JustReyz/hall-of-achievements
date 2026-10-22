@@ -178,6 +178,16 @@ export async function initTables(client: {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_reminder_attempts_idempotency ON reminder_attempts (idempotency_key);
       CREATE INDEX IF NOT EXISTS idx_reminder_attempts_token_attempted ON reminder_attempts (token_hash, attempted_at DESC);
       CREATE INDEX IF NOT EXISTS idx_reminder_attempts_attempted_at ON reminder_attempts (attempted_at DESC);
+
+      CREATE TABLE IF NOT EXISTS storage_objects (
+        key TEXT PRIMARY KEY,
+        data BYTEA NOT NULL,
+        mime_type TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_storage_objects_created ON storage_objects (created_at);
     `);
     return;
   }
@@ -287,6 +297,15 @@ export async function initTables(client: {
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_reminder_attempts_idempotency ON reminder_attempts (idempotency_key)`,
     `CREATE INDEX IF NOT EXISTS idx_reminder_attempts_token_attempted ON reminder_attempts (token_hash, attempted_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_reminder_attempts_attempted_at ON reminder_attempts (attempted_at DESC)`,
+    `CREATE TABLE IF NOT EXISTS storage_objects (
+      key TEXT PRIMARY KEY,
+      data BYTEA NOT NULL,
+      mime_type TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_storage_objects_created ON storage_objects (created_at)`,
   ];
 
   for (const stmt of statements) {

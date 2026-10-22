@@ -9,6 +9,7 @@ import {
   uuid,
   varchar,
   date,
+  customType,
 } from 'drizzle-orm/pg-core';
 
 /**
@@ -230,4 +231,34 @@ export type InsertPushSubscription = typeof pushSubscriptions.$inferInsert;
 
 export type ReminderAttempt = typeof reminderAttempts.$inferSelect;
 export type InsertReminderAttempt = typeof reminderAttempts.$inferInsert;
+
+/**
+ * Durable storage objects table for serverless environments.
+ */
+export const storageObjects = pgTable(
+  'storage_objects',
+  {
+    key: text('key').primaryKey(),
+    data: customType<{ data: Buffer }>({
+      dataType() {
+        return 'bytea';
+      },
+    })('data').notNull(),
+    mimeType: text('mime_type').notNull(),
+    size: integer('size').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index('idx_storage_objects_created').on(table.createdAt),
+  ]
+);
+
+export type StorageObject = typeof storageObjects.$inferSelect;
+export type InsertStorageObject = typeof storageObjects.$inferInsert;
+
 
