@@ -14,6 +14,20 @@ export type AppDatabase = ReturnType<typeof drizzlePglite<typeof schema>>;
 let globalClient: unknown = null;
 let globalDb: AppDatabase | null = null;
 let isDbOutageSimulated = false;
+let hasEnsuredTables = false;
+
+export async function ensureTablesExist(client: {
+  query: (sql: string, params?: unknown[]) => Promise<unknown>;
+  exec?: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  if (hasEnsuredTables) return;
+  try {
+    await initTables(client);
+    hasEnsuredTables = true;
+  } catch (err) {
+    console.warn('[DB WARNING] Table auto-initialization skipped or failed:', err);
+  }
+}
 
 /**
  * Simulates a database outage for testing fail-closed resilience.
@@ -306,10 +320,15 @@ export async function getDb(): Promise<AppDatabase> {
     const pool = new Pool({
       connectionString: env.DATABASE_URL,
       max: 10,
-      connectionTimeoutMillis: 3000,
+      connectionTimeoutMillis: 5000,
     });
     globalClient = pool;
     globalDb = drizzleNeon(pool, { schema }) as unknown as AppDatabase;
+
+    if (!hasEnsuredTables) {
+      await ensureTablesExist(pool);
+    }
+
     return globalDb;
   } catch (err) {
     console.error('[DB FATAL] Failed to connect to PostgreSQL pool:', err);
@@ -330,6 +349,7 @@ export async function resetDatabase(): Promise<AppDatabase> {
   }
   globalClient = null;
   globalDb = null;
+  hasEnsuredTables = false;
   isDbOutageSimulated = false;
   return getDb();
 }
