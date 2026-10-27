@@ -88,6 +88,27 @@ export class PostgresStorageAdapter implements StorageAdapter {
     };
   }
 
+  async getObjectMetadata(key: string): Promise<StorageObjectMetadata> {
+    const pool = this.getPool();
+    // Metadata probe: never select or transfer the stored bytes.
+    const res = await pool.query(
+      'SELECT mime_type, size, updated_at FROM storage_objects WHERE key = $1',
+      [key]
+    );
+
+    const row = res.rows[0];
+    if (!row) {
+      throw new StorageNotFoundError(key);
+    }
+
+    return {
+      key,
+      size: row.size,
+      mimeType: row.mime_type,
+      lastModified: row.updated_at ? new Date(row.updated_at) : new Date(),
+    };
+  }
+
   async deleteObject(key: string): Promise<void> {
     const pool = this.getPool();
     await pool.query('DELETE FROM storage_objects WHERE key = $1', [key]);

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, type ChangeEvent, type FormEvent } from 'react';
-import { AchievementItem } from './types';
+import { AchievementItem, RestoreRequest } from './types';
 import { ArtworkViewer, type ViewerBackground } from './ArtworkViewer';
 
 const RESTORE_MAX_BYTES = 10 * 1024 * 1024; // 10 MiB, matches the upload pipeline
@@ -41,6 +41,8 @@ interface AchievementDetailModalProps {
   onViewerBackgroundChange: (background: ViewerBackground) => void;
   onUpdate: (updated: AchievementItem) => void;
   onDelete: (deletedId: string) => void;
+  restoreRequest: RestoreRequest | null;
+  onDismissRestore: () => void;
 }
 
 export function AchievementDetailModal({
@@ -58,11 +60,14 @@ export function AchievementDetailModal({
   onViewerBackgroundChange,
   onUpdate,
   onDelete,
+  restoreRequest,
+  onDismissRestore,
 }: AchievementDetailModalProps) {
   const [displayUrl, setDisplayUrl] = useState<string | null>(null);
   const [imageLoading, setImageLoading] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [restoreResolved, setRestoreResolved] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
   // Edit mode state
@@ -130,6 +135,10 @@ export function AchievementDetailModal({
       isCancelled = true;
     };
   }, [achievement]);
+
+  useEffect(() => {
+    setRestoreResolved(false);
+  }, [achievement?.id, restoreRequest]);
 
   const detailModalRef = useRef<HTMLDivElement>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
@@ -245,6 +254,16 @@ export function AchievementDetailModal({
   }, [viewerOpen, hasPrevious, hasNext, onClose, onViewerClose, onPrevious, onNext]);
 
   if (!achievement) return null;
+
+  const activeRestoreRequest =
+    restoreRequest && restoreRequest.achievementId === achievement.id && !restoreResolved
+      ? restoreRequest
+      : null;
+  const restoreMissingLabels = activeRestoreRequest
+    ? (['original', 'display', 'thumbnail'] as const).filter(
+        (field) => activeRestoreRequest[field] === 'missing'
+      )
+    : [];
 
   const handleDownloadOriginal = async () => {
     setDownloading(true);
@@ -408,6 +427,7 @@ export function AchievementDetailModal({
       }
 
       // Reopening the record re-resolves the signed URL from the new asset.
+      setRestoreResolved(true);
       onUpdate({ ...finalizeData.achievement, asset: finalizeData.asset ?? achievement.asset ?? null });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to restore artwork');
@@ -517,6 +537,96 @@ export function AchievementDetailModal({
           </div>
         )}
 
+        {activeRestoreRequest && (
+          <div
+            data-restore-prompt
+            role="region"
+            aria-label="Restore artwork prompt"
+            style={{
+              margin: '16px 24px 0',
+              padding: '14px 16px',
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              backgroundColor: '#eff6ff',
+              border: '1px solid #bfdbfe',
+              borderRadius: 8,
+            }}
+          >
+            <div style={{ flex: '1 1 280px' }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#1e3a8a' }}>
+                {activeRestoreRequest.linkage === 'missing'
+                  ? 'Image file not linked'
+                  : 'Stored image needs attention'}
+              </div>
+              <p style={{ margin: '4px 0 0 0', fontSize: 13, lineHeight: 1.5, color: '#334155' }}>
+                {activeRestoreRequest.linkage === 'missing'
+                  ? 'This artwork record has no linked image asset. '
+                  : `The health check could not find the stored ${
+                      restoreMissingLabels.length > 0
+                        ? restoreMissingLabels.join(', ')
+                        : 'image'
+                    } ${restoreMissingLabels.length === 1 ? 'file' : 'files'}. `}
+                Restoring uploads a replacement image file only. The title, completion date,
+                notes, tags, and thumbnail framing are metadata and stay unchanged.
+              </p>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => restoreInputRef.current?.click()}
+                disabled={restoring}
+                style={{
+                  minHeight: 44,
+                  padding: '9px 14px',
+                  backgroundColor: '#2563eb',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 6,
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: restoring ? 'not-allowed' : 'pointer',
+                  opacity: restoring ? 0.7 : 1,
+                }}
+              >
+                {restoring ? 'Restoring artwork…' : 'Restore artwork file'}
+              </button>
+              <button
+                type="button"
+                onClick={onDismissRestore}
+                disabled={restoring}
+                style={{
+                  minHeight: 44,
+                  padding: '9px 14px',
+                  backgroundColor: '#fff',
+                  color: '#475569',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: 6,
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: restoring ? 'not-allowed' : 'pointer',
+                  opacity: restoring ? 0.7 : 1,
+                }}
+              >
+                Not now
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* One file input serves both restore entry points. It stays mounted
+            while the display preview loads, so the health prompt can open it. */}
+        <input
+          ref={restoreInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          onChange={(e) => void handleRestoreFile(e)}
+          disabled={restoring}
+          style={{ display: 'none' }}
+        />
+
         {/* Content Body: Responsive Split */}
         <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', padding: '24px', gap: '24px' }}>
           {/* Left: Image Display */}
@@ -617,14 +727,6 @@ export function AchievementDetailModal({
                 >
                   {restoring ? 'Restoring artwork...' : '📎 Restore artwork'}
                 </button>
-                <input
-                  ref={restoreInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={(e) => void handleRestoreFile(e)}
-                  disabled={restoring}
-                  style={{ display: 'none' }}
-                />
               </div>
             )}
           </div>

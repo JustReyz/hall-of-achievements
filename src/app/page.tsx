@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useCallback, useRef, type FormEvent } from 'react';
 import { AchievementItem, GalleryResponse, StorageQuotaInfo } from '@/components/gallery/types';
-import type { GalleryFilters } from '@/components/gallery/types';
+import type { GalleryFilters, RestoreRequest } from '@/components/gallery/types';
 import { SearchBar } from '@/components/gallery/SearchBar';
 import { TagBrowser } from '@/components/gallery/TagBrowser';
 import { GalleryGrid } from '@/components/gallery/GalleryGrid';
 import { AddAchievementModal } from '@/components/gallery/AddAchievementModal';
 import { AchievementDetailModal } from '@/components/gallery/AchievementDetailModal';
+import { ArchiveHealthPanel } from '@/components/gallery/ArchiveHealthPanel';
 import { ContactSheetExport } from '@/components/gallery/ContactSheetExport';
 import type { ViewerBackground } from '@/components/gallery/ArtworkViewer';
 import { NotificationPanel } from '@/components/notifications/NotificationPanel';
@@ -82,6 +83,8 @@ export default function HomePage() {
   const [contactSheetMode, setContactSheetMode] = useState(false);
   const [contactSheetSelection, setContactSheetSelection] = useState<string[]>([]);
   const [contactSheetScope, setContactSheetScope] = useState(0);
+  const [restoreRequest, setRestoreRequest] = useState<RestoreRequest | null>(null);
+  const [archiveRevision, setArchiveRevision] = useState(0);
 
   const loadedById = new Map(items.map((item) => [item.id, item]));
   const contactSheetItems = contactSheetSelection
@@ -109,6 +112,7 @@ export default function HomePage() {
     setSelectedId(null);
     setSelectedSnapshot(null);
     setIsViewerOpen(false);
+    setRestoreRequest(null);
   }, [invalidateNavigation]);
 
   const closeViewer = useCallback(() => {
@@ -168,6 +172,7 @@ export default function HomePage() {
       setSelectedId(item.id);
       setSelectedSnapshot(item);
       setIsViewerOpen(false);
+      setRestoreRequest(null);
     },
     [invalidateNavigation]
   );
@@ -177,8 +182,49 @@ export default function HomePage() {
       invalidateNavigation();
       setSelectedId(item.id);
       setSelectedSnapshot(item);
+      setRestoreRequest(null);
     },
     [invalidateNavigation]
+  );
+
+  const openRestoreRequest = useCallback(
+    async (request: RestoreRequest) => {
+      const loaded = items.find((item) => item.id === request.achievementId);
+      if (loaded) {
+        invalidateNavigation();
+        setSelectedId(loaded.id);
+        setSelectedSnapshot(loaded);
+        setIsViewerOpen(false);
+        setRestoreRequest(request);
+        return;
+      }
+
+      const generation = requestGeneration.current;
+      let response: Response;
+      try {
+        response = await fetch(`/api/achievements/${request.achievementId}`);
+      } catch {
+        throw new Error('Could not open this artwork. Please retry.');
+      }
+
+      if (response.status === 401) {
+        handleSessionExpired();
+        throw new Error('Your session expired. Unlock the archive and check again.');
+      }
+      if (!response.ok) {
+        throw new Error('Could not open this artwork. Please retry.');
+      }
+
+      const item = (await response.json()) as AchievementItem;
+      if (generation !== requestGeneration.current) return;
+
+      invalidateNavigation();
+      setSelectedId(item.id);
+      setSelectedSnapshot(item);
+      setIsViewerOpen(false);
+      setRestoreRequest(request);
+    },
+    [handleSessionExpired, invalidateNavigation, items]
   );
 
   // 1. Session verification
@@ -525,6 +571,7 @@ export default function HomePage() {
   // Callback when a new achievement is added
   const handleAddSuccess = () => {
     resetContactSheetSelection();
+    setArchiveRevision((revision) => revision + 1);
     void fetchAchievements(filters);
     void fetchTags(filters);
     void fetchQuota();
@@ -533,6 +580,8 @@ export default function HomePage() {
   // Callback when an achievement is updated
   const handleUpdateAchievement = (updated: AchievementItem) => {
     resetContactSheetSelection();
+    setArchiveRevision((revision) => revision + 1);
+    setRestoreRequest(null);
     if (!matchesGalleryFilters(updated, filters)) {
       closeDetail();
     } else {
@@ -545,6 +594,7 @@ export default function HomePage() {
   // Callback when an achievement is deleted
   const handleDeleteAchievement = () => {
     resetContactSheetSelection();
+    setArchiveRevision((revision) => revision + 1);
     closeDetail();
     void fetchAchievements(filters);
     void fetchTags(filters);
@@ -878,6 +928,13 @@ export default function HomePage() {
           onRetry={() => void fetchTags(filters)}
         />
 
+        <ArchiveHealthPanel
+          filters={filters}
+          revision={archiveRevision}
+          onOpenRestore={openRestoreRequest}
+          onSessionExpired={handleSessionExpired}
+        />
+
         <div
           style={{
             display: 'flex',
@@ -1018,6 +1075,8 @@ export default function HomePage() {
         onViewerBackgroundChange={setViewerBackground}
         onUpdate={handleUpdateAchievement}
         onDelete={handleDeleteAchievement}
+        restoreRequest={restoreRequest}
+        onDismissRestore={() => setRestoreRequest(null)}
       />
     </div>
   );

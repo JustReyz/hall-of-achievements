@@ -278,10 +278,15 @@ async function runEdgeProbes() {
       return baseStorage.putObject(key, data, options);
     },
     getObject: (key: string) => baseStorage.getObject(key),
+    getObjectMetadata: (key: string) => baseStorage.getObjectMetadata(key),
     deleteObject: (key: string) => baseStorage.deleteObject(key),
     deleteObjects: (keys: string[]) => baseStorage.deleteObjects(keys),
     createSignedUploadUrl: (key: string, exp: number) => baseStorage.createSignedUploadUrl(key, exp),
-    createSignedDownloadUrl: (key: string, exp: number, opt?: any) => baseStorage.createSignedDownloadUrl(key, exp, opt),
+    createSignedDownloadUrl: (
+      key: string,
+      exp: number,
+      opt?: Parameters<MemoryStorageAdapter['createSignedDownloadUrl']>[2]
+    ) => baseStorage.createSignedDownloadUrl(key, exp, opt),
   };
 
   let ec3Threw = false;

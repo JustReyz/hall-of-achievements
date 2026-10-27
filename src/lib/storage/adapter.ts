@@ -37,6 +37,8 @@ export interface StorageAdapter {
     metadata: StorageObjectMetadata;
   }>;
 
+  getObjectMetadata(key: string): Promise<StorageObjectMetadata>;
+
   deleteObject(key: string): Promise<void>;
 
   deleteObjects(keys: string[]): Promise<void>;

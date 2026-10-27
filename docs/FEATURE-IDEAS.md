@@ -47,9 +47,11 @@ Add several artworks together, then enter each artwork's details. Preserve the e
 
 ## 10. Archive health check
 
-Status: selected by the owner, included in the implementation plan.
+Status: implemented 2026-10-27 (Phase 5); focused tests and browser checks passed.
 
 Identify artwork with missing stored images and offer the existing restore action. Distinguish a missing file from a temporary request failure before recommending restoration.
+
+The implemented panel starts only from Check archive, pages through the active search, date, and tag scope, and probes object metadata in batches of eight. Missing files, unverified files, and records with no linked asset stay distinct. Restore opens the existing detail dialog; the check never repairs, replaces, or deletes anything.
 
 These entries record selected ideas. Entries not marked implemented remain planned.
 

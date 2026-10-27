@@ -32,6 +32,16 @@ export interface GalleryResponse {
   hasMore: boolean;
 }
 
+export type ObjectHealthState = 'present' | 'missing' | 'unknown';
+
+export interface RestoreRequest {
+  achievementId: string;
+  linkage: 'present' | 'missing';
+  original: ObjectHealthState;
+  display: ObjectHealthState;
+  thumbnail: ObjectHealthState;
+}
+
 export interface StorageQuotaInfo {
   totalAllowanceBytes: number;
   ceilingBytes: number;

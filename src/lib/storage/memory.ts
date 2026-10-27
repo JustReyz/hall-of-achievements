@@ -42,6 +42,14 @@ export class MemoryStorageAdapter implements StorageAdapter {
     return { data: entry.data, metadata: entry.metadata };
   }
 
+  async getObjectMetadata(key: string): Promise<StorageObjectMetadata> {
+    const entry = this.objects.get(key);
+    if (!entry) {
+      throw new StorageNotFoundError(key);
+    }
+    return { ...entry.metadata };
+  }
+
   async deleteObject(key: string): Promise<void> {
     this.objects.delete(key);
   }

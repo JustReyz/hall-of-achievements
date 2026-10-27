@@ -107,6 +107,47 @@ export class SupabaseStorageAdapter implements StorageAdapter {
     };
   }
 
+  async getObjectMetadata(key: string): Promise<StorageObjectMetadata> {
+    const cleanKey = key.replace(/^\/+/, '');
+    const url = `${this.baseUrl}/storage/v1/object/authenticated/${this.bucket}/${cleanKey}`;
+
+    // HEAD returns headers only; the object body is never transferred.
+    const res = await fetch(url, {
+      method: 'HEAD',
+      headers: this.getHeaders(),
+    });
+
+    if (res.status === 404) {
+      throw new StorageNotFoundError(cleanKey);
+    }
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new StorageError(
+        'METADATA_FAILED',
+        `Supabase getObjectMetadata failed (${res.status}): ${errText}`,
+        res.status
+      );
+    }
+
+    const sizeHeader = res.headers.get('content-length');
+    const parsedSize = sizeHeader === null ? 0 : Number.parseInt(sizeHeader, 10);
+    const lastModifiedHeader = res.headers.get('last-modified');
+    const parsedLastModified = lastModifiedHeader ? new Date(lastModifiedHeader) : null;
+    const etag = res.headers.get('etag');
+
+    return {
+      key: cleanKey,
+      size: Number.isFinite(parsedSize) ? parsedSize : 0,
+      mimeType: res.headers.get('content-type') || 'application/octet-stream',
+      ...(etag ? { etag } : {}),
+      lastModified:
+        parsedLastModified && !Number.isNaN(parsedLastModified.getTime())
+          ? parsedLastModified
+          : new Date(),
+    };
+  }
+
   async deleteObject(key: string): Promise<void> {
     await this.deleteObjects([key]);
   }
