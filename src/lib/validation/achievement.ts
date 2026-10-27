@@ -34,7 +34,7 @@ export function validateTitle(title: unknown): string {
   return trimmed;
 }
 
-export function validateCompletionDate(dateStr: unknown, timezone?: string): string {
+export function validateCalendarDate(dateStr: unknown): string {
   if (typeof dateStr !== 'string') {
     throw new ValidationError('INVALID_COMPLETION_DATE', 'Completion date must be a string in YYYY-MM-DD format.');
   }
@@ -63,6 +63,12 @@ export function validateCompletionDate(dateStr: unknown, timezone?: string): str
     throw new ValidationError('INVALID_COMPLETION_DATE', 'Completion date is not a valid calendar date.');
   }
 
+  return dateStr;
+}
+
+export function validateCompletionDate(dateStr: unknown, timezone?: string): string {
+  const validatedDate = validateCalendarDate(dateStr);
+
   // Check that completion date is not in the future relative to user's timezone
   let todayInTz: string;
   let resolvedTimezone = timezone || 'UTC';
@@ -86,14 +92,28 @@ export function validateCompletionDate(dateStr: unknown, timezone?: string): str
     todayInTz = formatter.format(new Date());
   }
 
-  if (dateStr > todayInTz) {
+  if (validatedDate > todayInTz) {
     throw new ValidationError(
       'INVALID_COMPLETION_DATE',
       `Completion date cannot be in the future (today is ${todayInTz} in timezone ${resolvedTimezone}).`
     );
   }
 
-  return dateStr;
+  return validatedDate;
+}
+
+export function validateDateRange(
+  from: string | null | undefined,
+  to: string | null | undefined
+): { from: string; to: string } {
+  const start = from?.trim() ?? '';
+  const end = to?.trim() ?? '';
+  if (start) validateCalendarDate(start);
+  if (end) validateCalendarDate(end);
+  if (start && end && start > end) {
+    throw new ValidationError('INVALID_DATE_RANGE', 'Completed from must not be after Completed through.');
+  }
+  return { from: start, to: end };
 }
 
 export function validateNotes(notes: unknown): string {
