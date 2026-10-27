@@ -117,6 +117,16 @@ export const achievements = pgTable(
 );
 
 /**
+ * A superseded asset version whose objects still need removing. The entry is
+ * dropped only after every key in it is gone, so a failed cleanup stays visible
+ * to the next attempt and stays counted against quota.
+ */
+export interface RetiredObject {
+  keys: string[];
+  accountedBytes: number;
+}
+
+/**
  * Assets table: original and derivative image metadata and storage keys.
  */
 export const assets = pgTable(
@@ -134,6 +144,7 @@ export const assets = pgTable(
     width: integer('width').notNull(),
     height: integer('height').notNull(),
     checksum: varchar('checksum', { length: 64 }).notNull(),
+    retiredObjects: jsonb('retired_objects').$type<RetiredObject[]>().notNull().default([]),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
       .notNull()
       .defaultNow(),
@@ -158,6 +169,8 @@ export const uploadIntents = pgTable(
     declaredSize: integer('declared_size').notNull(),
     reservedBytes: integer('reserved_bytes').notNull(),
     quarantineKey: text('quarantine_key').notNull(),
+    permanentKeys: jsonb('permanent_keys').$type<string[]>().notNull().default([]),
+    quarantineCleanedAt: timestamp('quarantine_cleaned_at', { withTimezone: true, mode: 'date' }),
     status: text('status')
       .$type<'pending' | 'consumed' | 'expired' | 'cleaned'>()
       .notNull()

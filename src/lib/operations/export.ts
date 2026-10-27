@@ -132,8 +132,18 @@ export async function exportArchive(options: ExportOptions = {}): Promise<Export
   });
   totalSizeBytes += achievementsBuf.length;
 
+  // Superseded versions awaiting cleanup are not archive content: their bytes
+  // are not exported and the reference is a server-side retry note only.
+  const pendingCleanup = readyAssets.filter((asset) => asset.retiredObjects.length > 0);
+  if (pendingCleanup.length > 0) {
+    console.warn(
+      `[EXPORT WARNING] ${pendingCleanup.length} artwork asset(s) still hold superseded objects awaiting cleanup. Their active files are exported; the obsolete versions are not.`
+    );
+  }
+  const archiveAssets = readyAssets.map(({ retiredObjects: _retiredObjects, ...asset }) => asset);
+
   // metadata/assets.json
-  const assetsJson = JSON.stringify(readyAssets, null, indent);
+  const assetsJson = JSON.stringify(archiveAssets, null, indent);
   const assetsBuf = Buffer.from(assetsJson, 'utf-8');
   const assetsHash = crypto.createHash('sha256').update(assetsBuf).digest('hex');
   fs.writeFileSync(path.join(targetDir, 'metadata', 'assets.json'), assetsBuf);

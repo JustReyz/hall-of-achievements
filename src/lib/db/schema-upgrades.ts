@@ -36,6 +36,12 @@ const ARCHIVE_SCHEMA_UPGRADES = [
     END IF;
   END
   $$;`,
+  `ALTER TABLE assets
+    ADD COLUMN IF NOT EXISTS retired_objects JSONB NOT NULL DEFAULT '[]'::jsonb`,
+  `ALTER TABLE upload_intents
+    ADD COLUMN IF NOT EXISTS permanent_keys JSONB NOT NULL DEFAULT '[]'::jsonb`,
+  `ALTER TABLE upload_intents
+    ADD COLUMN IF NOT EXISTS quarantine_cleaned_at TIMESTAMPTZ`,
 ];
 
 export async function applyArchiveSchemaUpgrades(client: UpgradeClient): Promise<void> {

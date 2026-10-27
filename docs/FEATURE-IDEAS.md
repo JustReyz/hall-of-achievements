@@ -41,9 +41,11 @@ Attach sketches and intermediate versions to a finished piece so its creative pr
 
 ## 9. Batch uploads
 
-Status: selected by the owner, included in the implementation plan.
+Status: implemented 2026-10-27 (Phase 6); focused tests and browser checks passed.
 
 Add several artworks together, then enter each artwork's details. Preserve the existing validation, storage quota, and upload limits. Show each file's result so failed uploads can be retried without duplicating successful ones.
+
+The implemented queue uploads one file at a time, keeps per-artwork details, and reuses the same upload intent on retry, so a lost response never creates a second record. Quota or slot exhaustion pauses the queue instead of dropping items.
 
 ## 10. Archive health check
 

@@ -1,183 +1,177 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback, type FormEvent, type ChangeEvent } from 'react';
+import { useState, useRef, useEffect, useCallback, type ChangeEvent } from 'react';
 import { AchievementItem } from './types';
+import { BatchUploadList } from './BatchUploadList';
+import {
+  MAX_BATCH_FILES,
+  createQueueItem,
+  runUploadQueue,
+  screenSelectedFiles,
+  type UploadQueueItem,
+} from '@/lib/uploads/upload-item';
 
 interface AddAchievementModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: (newAchievement: AchievementItem) => void;
+  onSuccess: (newAchievements: AchievementItem[]) => void;
+  onSessionExpired?: () => void;
 }
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MiB
+function todayLocalDate(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
-export function AddAchievementModal({ isOpen, onClose, onSuccess }: AddAchievementModalProps) {
-  const [file, setFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [title, setTitle] = useState('');
-  const [completionDate, setCompletionDate] = useState(() => {
-    // Client local date in YYYY-MM-DD
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  });
-  const [notes, setNotes] = useState('');
-  const [tagsInput, setTagsInput] = useState('');
-  const [uploading, setUploading] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+export function AddAchievementModal({
+  isOpen,
+  onClose,
+  onSuccess,
+  onSessionExpired,
+}: AddAchievementModalProps) {
+  const [items, setItems] = useState<UploadQueueItem[]>([]);
+  const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
+  const cancelRef = useRef(false);
 
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    setError(null);
-    const selected = e.target.files?.[0];
-    if (!selected) return;
+  const queuedCount = items.filter((item) => item.stage === 'queued').length;
+  const savedCount = items.filter((item) => item.stage === 'succeeded').length;
+  const needsAttention = items.filter(
+    (item) => item.stage === 'unknown' || item.stage === 'failed'
+  ).length;
 
-    // Client-side file type check
-    const validMimes = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!validMimes.includes(selected.type)) {
-      setError('Only JPEG, PNG, and WebP images are allowed. Disallowed formats (SVG, GIF, etc.) are rejected.');
-      return;
-    }
+  const handleFilesChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    if (selected.length === 0) return;
 
-    // Client-side file size check
-    if (selected.size > MAX_FILE_SIZE) {
-      setError(`File size (${(selected.size / 1024 / 1024).toFixed(1)} MiB) exceeds the 10 MiB limit.`);
-      return;
-    }
+    const { accepted, rejected } = screenSelectedFiles(selected, items.length);
+    setError(
+      rejected.length > 0
+        ? `Not added: ${rejected.map((entry) => `${entry.name} (${entry.reason})`).join('; ')}.`
+        : null
+    );
+    setNotice(null);
 
-    setFile(selected);
-    const objUrl = URL.createObjectURL(selected);
-    setPreviewUrl(objUrl);
-
-    if (!title.trim()) {
-      const suggestedTitle = selected.name.replace(/\.[^/.]+$/, '');
-      setTitle(suggestedTitle.slice(0, 120));
-    }
+    const completionDate = todayLocalDate();
+    setItems((previous) => [
+      ...previous,
+      ...accepted.map((file) => createQueueItem(file, { completionDate })),
+    ]);
   };
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!file) {
-      setError('Please select an artwork image file.');
-      return;
-    }
+  const updateItem = useCallback((id: string, patch: Partial<UploadQueueItem>) => {
+    setItems((previous) =>
+      previous.map((item) => (item.id === id ? { ...item, ...patch } : item))
+    );
+  }, []);
 
-    if (!title.trim()) {
-      setError('Title is required.');
-      return;
-    }
+  const removeItem = useCallback((id: string) => {
+    setItems((previous) => previous.filter((item) => item.id !== id));
+  }, []);
 
-    setUploading(true);
+  const retryItem = useCallback((id: string) => {
+    setItems((previous) =>
+      previous.map((item) =>
+        item.id === id && item.stage !== 'succeeded'
+          ? { ...item, stage: 'queued', error: null }
+          : item
+      )
+    );
     setError(null);
-    setUploadStatus('Requesting direct upload capability...');
+  }, []);
+
+  const resetQueue = useCallback(() => {
+    setItems([]);
+    setError(null);
+    setNotice(null);
+    setStopping(false);
+    cancelRef.current = false;
+  }, []);
+
+  const handleUpload = async () => {
+    if (running) return;
+
+    const pending = items.filter((item) => item.stage === 'queued');
+    if (pending.length === 0) {
+      setError('Add at least one image to upload.');
+      return;
+    }
+
+    const missingTitle = pending.find((item) => !item.title.trim());
+    if (missingTitle) {
+      setError(`Add a title for "${missingTitle.file.name}" before uploading.`);
+      return;
+    }
+    const missingDate = pending.find((item) => !item.completionDate);
+    if (missingDate) {
+      setError(`Choose a completion date for "${missingDate.file.name}".`);
+      return;
+    }
+
+    setRunning(true);
+    setStopping(false);
+    setError(null);
+    setNotice(null);
+    cancelRef.current = false;
 
     try {
-      // Step 1: Create upload intent
-      const intentRes = await fetch('/api/uploads/intents', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        body: JSON.stringify({
-          fileName: file.name,
-          mimeType: file.type,
-          fileSize: file.size,
-        }),
-      });
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      const run = await runUploadQueue(
+        items,
+        // The browser's fetch needs its window receiver; pass a bound call rather
+        // than the bare global so calling it through the dependency object works.
+        { fetch: (input, init) => fetch(input, init), timezone },
+        (updated) => updateItem(updated.id, updated),
+        () => cancelRef.current
+      );
 
-      const intentData = (await intentRes.json()) as {
-        intentId?: string;
-        uploadUrl?: string;
-        error?: string;
-      };
+      setItems(run.items);
 
-      if (!intentRes.ok || !intentData.intentId || !intentData.uploadUrl) {
-        throw new Error(intentData.error || 'Failed to create upload intent');
+      if (run.achievements.length > 0) {
+        onSuccess(run.achievements);
       }
 
-      const { intentId, uploadUrl } = intentData;
+      const remaining = run.items.filter((item) => item.stage !== 'succeeded');
 
-      // Step 2: Direct upload to private storage quarantine
-      setUploadStatus('Uploading artwork directly to secure storage...');
-      const uploadRes = await fetch(uploadUrl, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': file.type,
-        },
-        body: file,
-      });
-
-      if (!uploadRes.ok) {
-        throw new Error('Failed to upload image bytes to storage capability');
+      if (run.sessionExpired) {
+        onSessionExpired?.();
+        setNotice('Your session expired. Unlock the archive, then retry the remaining artwork.');
+      } else if (run.paused) {
+        setNotice(
+          'The queue paused. No upload slot or storage allowance is free right now; retry the remaining artwork once space is available.'
+        );
+      } else if (remaining.length === 0) {
+        resetQueue();
+        onClose();
+        return;
+      } else if (remaining.some((item) => item.stage === 'unknown')) {
+        setNotice(
+          'One upload was not confirmed by the server. Retry it: the same upload intent is reused, so no duplicate artwork is created.'
+        );
+      } else {
+        setNotice('Some artwork was not saved. Retry those items or remove them.');
       }
-
-      // Step 3: Finalize upload with metadata
-      setUploadStatus('Verifying byte signatures and generating derivatives...');
-      const parsedTags = tagsInput
-        .split(',')
-        .map((t) => t.trim().toLowerCase())
-        .filter((t) => t.length > 0);
-
-      const clientTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-
-      const finalizeRes = await fetch(`/api/uploads/${intentId}/finalize`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        body: JSON.stringify({
-          title: title.trim(),
-          completionDate,
-          notes: notes.trim(),
-          tags: parsedTags,
-          timezone: clientTimezone,
-        }),
-      });
-
-      const finalizeData = (await finalizeRes.json()) as {
-        finalized?: boolean;
-        achievement?: AchievementItem;
-        error?: string;
-      };
-
-      if (!finalizeRes.ok || !finalizeData.achievement) {
-        throw new Error(finalizeData.error || 'Finalization failed');
-      }
-
-      // Success!
-      onSuccess(finalizeData.achievement);
-      handleClose();
-    } catch (err: unknown) {
-      console.error('[UPLOAD ERROR]', err);
-      const msg = err instanceof Error ? err.message : 'Upload failed';
-      setError(msg);
     } finally {
-      setUploading(false);
-      setUploadStatus(null);
+      setRunning(false);
+      setStopping(false);
     }
   };
 
   const handleClose = useCallback(() => {
-    if (uploading) return;
-    setFile(null);
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-      setPreviewUrl(null);
-    }
-    setTitle('');
-    setNotes('');
-    setTagsInput('');
-    setError(null);
+    if (running) return;
+    resetQueue();
     onClose();
-  }, [uploading, previewUrl, onClose]);
+  }, [running, resetQueue, onClose]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -194,40 +188,36 @@ export function AddAchievementModal({ isOpen, onClose, onSuccess }: AddAchieveme
         const focusables = modalRef.current.querySelectorAll<HTMLElement>(
           'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
         );
-        const first = focusables[0];
-        if (first) {
-          first.focus();
-        }
+        focusables[0]?.focus();
       }
     }, 50);
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
         handleClose();
         return;
       }
 
-      if (e.key === 'Tab' && modalRef.current) {
-        const focusables = modalRef.current.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      if (event.key === 'Tab' && modalRef.current) {
+        const focusables = Array.from(
+          modalRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
         );
         if (focusables.length === 0) return;
         const first = focusables[0];
         const last = focusables[focusables.length - 1];
+        if (!first || !last) return;
 
-        if (first && last) {
-          if (e.shiftKey) {
-            if (document.activeElement === first) {
-              e.preventDefault();
-              last.focus();
-            }
-          } else {
-            if (document.activeElement === last) {
-              e.preventDefault();
-              first.focus();
-            }
+        if (event.shiftKey) {
+          if (document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
           }
+        } else if (document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
         }
       }
     };
@@ -257,8 +247,8 @@ export function AddAchievementModal({ isOpen, onClose, onSuccess }: AddAchieveme
         padding: '20px',
         zIndex: 1000,
       }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) handleClose();
+      onClick={(event) => {
+        if (event.target === event.currentTarget) handleClose();
       }}
     >
       <div
@@ -266,7 +256,7 @@ export function AddAchievementModal({ isOpen, onClose, onSuccess }: AddAchieveme
         style={{
           backgroundColor: '#fff',
           borderRadius: 12,
-          maxWidth: 620,
+          maxWidth: 720,
           width: '100%',
           maxHeight: '90vh',
           overflowY: 'auto',
@@ -276,18 +266,18 @@ export function AddAchievementModal({ isOpen, onClose, onSuccess }: AddAchieveme
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <h2 id="add-achievement-title" style={{ margin: 0, fontSize: '22px', color: '#0f172a' }}>
-            Record Artwork Achievement
+            Record Artwork Achievements
           </h2>
           <button
             type="button"
             onClick={handleClose}
             aria-label="Close dialog"
-            disabled={uploading}
+            disabled={running}
             style={{
               background: 'none',
               border: 'none',
               fontSize: '20px',
-              cursor: 'pointer',
+              cursor: running ? 'not-allowed' : 'pointer',
               color: '#64748b',
               padding: 8,
               minWidth: 44,
@@ -312,194 +302,143 @@ export function AddAchievementModal({ isOpen, onClose, onSuccess }: AddAchieveme
               color: '#991b1b',
               fontSize: '14px',
               marginBottom: 16,
+              lineHeight: 1.5,
             }}
           >
             {error}
           </div>
         )}
 
-        <form onSubmit={(e) => void handleSubmit(e)}>
-          {/* File Picker */}
-          <div style={{ marginBottom: 18 }}>
-            <label
-              htmlFor="achievement-file-input"
-              style={{ display: 'block', fontWeight: 600, fontSize: '14px', color: '#334155', marginBottom: 6 }}
-            >
-              Artwork File (JPEG, PNG, WebP — max 10 MiB, &le; 20 MP) *
-            </label>
-            <input
-              id="achievement-file-input"
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              onChange={handleFileChange}
-              disabled={uploading}
-              required
-              style={{
-                width: '100%',
-                boxSizing: 'border-box',
-                padding: '8px 12px',
-                borderRadius: 6,
-                border: '1px solid #cbd5e1',
-                fontSize: '14px',
-              }}
-            />
-            {previewUrl && (
-              <div style={{ marginTop: 12, textAlign: 'center' }}>
-                <img
-                  src={previewUrl}
-                  alt="Selected artwork preview"
-                  style={{
-                    maxHeight: 180,
-                    maxWidth: '100%',
-                    objectFit: 'contain',
-                    borderRadius: 6,
-                    border: '1px solid #e2e8f0',
-                  }}
-                />
-              </div>
-            )}
+        {notice && (
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              padding: '12px 16px',
+              backgroundColor: '#eff6ff',
+              border: '1px solid #bfdbfe',
+              borderRadius: 8,
+              color: '#1e3a8a',
+              fontSize: '14px',
+              marginBottom: 16,
+              lineHeight: 1.5,
+            }}
+          >
+            {notice}
           </div>
+        )}
 
-          {/* Title */}
-          <div style={{ marginBottom: 16 }}>
-            <label htmlFor="achievement-title-input" style={{ display: 'block', fontWeight: 600, fontSize: '14px', color: '#334155', marginBottom: 6 }}>
-              Title * ({title.length}/120)
-            </label>
-            <input
-              id="achievement-title-input"
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              maxLength={120}
-              required
-              disabled={uploading}
-              placeholder="e.g. Mountain Summit at Sunset"
-              style={{
-                width: '100%',
-                boxSizing: 'border-box',
-                padding: '10px 12px',
-                borderRadius: 6,
-                border: '1px solid #cbd5e1',
-                fontSize: '15px',
-              }}
-            />
-          </div>
+        <div style={{ marginBottom: 18 }}>
+          <label
+            htmlFor="achievement-file-input"
+            style={{ display: 'block', fontWeight: 600, fontSize: '14px', color: '#334155', marginBottom: 6 }}
+          >
+            Artwork files (JPEG, PNG, WebP — max 10 MiB each, up to {MAX_BATCH_FILES} at once)
+          </label>
+          <input
+            id="achievement-file-input"
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            multiple
+            onChange={handleFilesChange}
+            disabled={running || items.length >= MAX_BATCH_FILES}
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              padding: '8px 12px',
+              borderRadius: 6,
+              border: '1px solid #cbd5e1',
+              fontSize: '14px',
+            }}
+          />
+          <p style={{ margin: '8px 0 0 0', fontSize: 13, color: '#64748b', lineHeight: 1.5 }}>
+            Each file is uploaded one at a time. A failed file keeps its details, and retrying it
+            never duplicates artwork that already saved.
+          </p>
+        </div>
 
-          {/* Completion Date */}
-          <div style={{ marginBottom: 16 }}>
-            <label htmlFor="achievement-date-input" style={{ display: 'block', fontWeight: 600, fontSize: '14px', color: '#334155', marginBottom: 6 }}>
-              Completion Date * (YYYY-MM-DD)
-            </label>
-            <input
-              id="achievement-date-input"
-              type="date"
-              value={completionDate}
-              onChange={(e) => setCompletionDate(e.target.value)}
-              required
-              disabled={uploading}
-              style={{
-                width: '100%',
-                boxSizing: 'border-box',
-                padding: '10px 12px',
-                borderRadius: 6,
-                border: '1px solid #cbd5e1',
-                fontSize: '15px',
-              }}
-            />
-          </div>
+        <BatchUploadList
+          items={items}
+          running={running}
+          onEdit={(id, patch) => updateItem(id, patch)}
+          onRetry={retryItem}
+          onRemove={removeItem}
+        />
 
-          {/* Notes */}
-          <div style={{ marginBottom: 16 }}>
-            <label htmlFor="achievement-notes-input" style={{ display: 'block', fontWeight: 600, fontSize: '14px', color: '#334155', marginBottom: 6 }}>
-              Notes / Reflections ({notes.length}/2000)
-            </label>
-            <textarea
-              id="achievement-notes-input"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              maxLength={2000}
-              rows={3}
-              disabled={uploading}
-              placeholder="Medium, technique, reflections, challenges overcome..."
-              style={{
-                width: '100%',
-                boxSizing: 'border-box',
-                padding: '10px 12px',
-                borderRadius: 6,
-                border: '1px solid #cbd5e1',
-                fontSize: '14px',
-                resize: 'vertical',
-              }}
-            />
-          </div>
+        {(items.length > 0 || running) && (
+          <p role="status" aria-live="polite" style={{ margin: '0 0 14px 0', fontSize: 13, color: '#475569' }}>
+            {items.length} selected · {queuedCount} ready · {savedCount} saved
+            {needsAttention > 0 ? ` · ${needsAttention} need attention` : ''}
+          </p>
+        )}
 
-          {/* Tags */}
-          <div style={{ marginBottom: 24 }}>
-            <label htmlFor="achievement-tags-input" style={{ display: 'block', fontWeight: 600, fontSize: '14px', color: '#334155', marginBottom: 6 }}>
-              Tags (comma-separated, max 10 tags, 24 chars each)
-            </label>
-            <input
-              id="achievement-tags-input"
-              type="text"
-              value={tagsInput}
-              onChange={(e) => setTagsInput(e.target.value)}
-              disabled={uploading}
-              placeholder="oil, landscape, portrait, study"
-              style={{
-                width: '100%',
-                boxSizing: 'border-box',
-                padding: '10px 12px',
-                borderRadius: 6,
-                border: '1px solid #cbd5e1',
-                fontSize: '14px',
-              }}
-            />
-          </div>
-
-          {/* Progress Status */}
-          {uploadStatus && (
-            <div style={{ marginBottom: 16, fontSize: '14px', color: '#2563eb', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span>⏳</span> {uploadStatus}
-            </div>
-          )}
-
-          {/* Action buttons */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 12 }}>
+          {running && (
             <button
               type="button"
-              onClick={handleClose}
-              disabled={uploading}
+              onClick={() => {
+                cancelRef.current = true;
+                setStopping(true);
+              }}
+              disabled={stopping}
               style={{
                 padding: '10px 18px',
-                backgroundColor: '#f1f5f9',
+                backgroundColor: '#fff',
                 color: '#475569',
                 border: '1px solid #cbd5e1',
                 borderRadius: 6,
                 fontWeight: 500,
-                cursor: 'pointer',
+                cursor: stopping ? 'not-allowed' : 'pointer',
+                opacity: stopping ? 0.7 : 1,
               }}
             >
-              Cancel
+              {stopping ? 'Stopping after this artwork…' : 'Stop after this artwork'}
             </button>
-            <button
-              type="submit"
-              disabled={uploading}
-              style={{
-                padding: '10px 22px',
-                backgroundColor: '#2563eb',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 6,
-                fontWeight: 600,
-                cursor: uploading ? 'not-allowed' : 'pointer',
-                opacity: uploading ? 0.7 : 1,
-              }}
-            >
-              {uploading ? 'Processing...' : 'Save Achievement'}
-            </button>
-          </div>
-        </form>
+          )}
+          <button
+            type="button"
+            onClick={handleClose}
+            disabled={running}
+            style={{
+              minHeight: 44,
+              padding: '10px 18px',
+              backgroundColor: '#f1f5f9',
+              color: '#475569',
+              border: '1px solid #cbd5e1',
+              borderRadius: 6,
+              fontWeight: 500,
+              cursor: running ? 'not-allowed' : 'pointer',
+              opacity: running ? 0.7 : 1,
+            }}
+          >
+            {savedCount > 0 && !running ? 'Close' : 'Cancel'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleUpload()}
+            disabled={running || queuedCount === 0}
+            style={{
+              minHeight: 44,
+              padding: '10px 22px',
+              backgroundColor: '#2563eb',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 6,
+              fontWeight: 600,
+              cursor: running || queuedCount === 0 ? 'not-allowed' : 'pointer',
+              opacity: running || queuedCount === 0 ? 0.7 : 1,
+            }}
+          >
+            {running
+              ? 'Uploading…'
+              : queuedCount === 0
+                ? 'Upload artwork'
+                : queuedCount === 1
+                  ? 'Upload artwork'
+                  : `Upload ${queuedCount} artworks`}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -138,6 +138,7 @@ export async function initTables(client: {
         width INTEGER NOT NULL,
         height INTEGER NOT NULL,
         checksum VARCHAR(64) NOT NULL,
+        retired_objects JSONB NOT NULL DEFAULT '[]'::jsonb,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
@@ -153,6 +154,8 @@ export async function initTables(client: {
         declared_size INTEGER NOT NULL,
         reserved_bytes INTEGER NOT NULL,
         quarantine_key TEXT NOT NULL,
+        permanent_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
+        quarantine_cleaned_at TIMESTAMPTZ,
         status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'consumed', 'expired', 'cleaned')),
         expires_at TIMESTAMPTZ NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -271,6 +274,7 @@ export async function initTables(client: {
       width INTEGER NOT NULL,
       height INTEGER NOT NULL,
       checksum VARCHAR(64) NOT NULL,
+      retired_objects JSONB NOT NULL DEFAULT '[]'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_assets_achievement_id ON assets (achievement_id)`,
@@ -284,6 +288,8 @@ export async function initTables(client: {
       declared_size INTEGER NOT NULL,
       reserved_bytes INTEGER NOT NULL,
       quarantine_key TEXT NOT NULL,
+      permanent_keys JSONB NOT NULL DEFAULT '[]'::jsonb,
+      quarantine_cleaned_at TIMESTAMPTZ,
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'consumed', 'expired', 'cleaned')),
       expires_at TIMESTAMPTZ NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

@@ -2,17 +2,11 @@ import { type NextRequest } from 'next/server';
 import { eq, and, or, lt, desc } from 'drizzle-orm';
 import { authenticateApiRequest, jsonError, jsonResponse } from '@/lib/auth/api-guard';
 import { getDb } from '@/lib/db';
-import { achievements, assets, uploadIntents } from '@/lib/db/schema';
-import { getStorage } from '@/lib/storage';
-import { validateImageBuffer, ImageValidationError } from '@/lib/image/validator';
-import { processImageDerivatives } from '@/lib/image/processor';
+import { achievements, assets } from '@/lib/db/schema';
 import { buildGalleryConditions } from '@/lib/gallery/query';
 import type { GalleryFilters } from '@/components/gallery/types';
+import { finalizeUpload } from '@/lib/uploads/finalize';
 import {
-  validateTitle,
-  validateCompletionDate,
-  validateNotes,
-  validateTags,
   validateTagFilter,
   validateDateRange,
   ValidationError,
@@ -126,173 +120,33 @@ export async function POST(request: NextRequest) {
 
   let body: Record<string, unknown>;
   try {
-    body = (await request.json()) as Record<string, unknown>;
+    const parsed: unknown = await request.json();
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return jsonError('Request body must be a JSON object', 400, 'INVALID_INPUT');
+    }
+    body = parsed as Record<string, unknown>;
   } catch {
     return jsonError('Invalid JSON request body', 400, 'INVALID_INPUT');
   }
 
-  // Validate fields
-  let title: string;
-  let completionDate: string;
-  let notes: string;
-  let tags: string[];
-  const clientTz = typeof body.timezone === 'string' ? body.timezone : 'UTC';
-
-  try {
-    title = validateTitle(body.title);
-    completionDate = validateCompletionDate(body.completionDate, clientTz);
-    notes = validateNotes(body.notes);
-    tags = validateTags(body.tags);
-  } catch (err: unknown) {
-    if (err instanceof ValidationError) {
-      return jsonError(err.message, err.statusCode, err.code);
-    }
-    throw err;
-  }
-
   const intentId = typeof body.intentId === 'string' ? body.intentId.trim() : null;
   if (!intentId) {
-    return jsonError('intentId is required to create an achievement with artwork', 400, 'MISSING_INTENT_ID');
+    return jsonError(
+      'intentId is required to create an achievement with artwork',
+      400,
+      'MISSING_INTENT_ID'
+    );
   }
 
-  const db = await getDb();
-  const storage = getStorage();
-
-  // 1. Verify upload intent
-  const intentRows = await db
-    .select()
-    .from(uploadIntents)
-    .where(eq(uploadIntents.id, intentId));
-
-  const intent = intentRows[0];
-  if (!intent) {
-    return jsonError('Upload intent not found', 404, 'NOT_FOUND');
-  }
-
-  if (intent.status === 'consumed') {
-    return jsonError('Upload intent has already been consumed', 400, 'ALREADY_CONSUMED');
-  }
-
-  const now = new Date();
-  if (intent.status === 'expired' || now.getTime() > new Date(intent.expiresAt).getTime()) {
-    return jsonError('Upload intent has expired and cannot be promoted', 410, 'INTENT_EXPIRED');
-  }
-
-  // 2. Fetch quarantine bytes from storage
-  let quarantineData: Buffer;
-  try {
-    const quarantineObj = await storage.getObject(intent.quarantineKey);
-    quarantineData = quarantineObj.data;
-  } catch {
-    return jsonError('Quarantined file not found in storage. Upload may not have completed.', 400, 'UPLOAD_NOT_FOUND');
-  }
-
-  // 3. Two-stage image validation
-  let validated;
-  try {
-    validated = await validateImageBuffer(quarantineData);
-  } catch (err: unknown) {
-    await storage.deleteObject(intent.quarantineKey).catch(() => {});
-    await db
-      .update(uploadIntents)
-      .set({ status: 'cleaned' })
-      .where(eq(uploadIntents.id, intent.id));
-
-    if (err instanceof ImageValidationError) {
-      return jsonError(err.message, err.statusCode, err.code);
-    }
-    return jsonError('Image validation failed', 400, 'CORRUPT_IMAGE');
-  }
-
-  // 4. Generate derivatives
-  let derivatives;
-  try {
-    derivatives = await processImageDerivatives(quarantineData);
-  } catch (err) {
-    console.error('[PROCESS DERIVATIVES ERROR]', err);
-    return jsonError('Failed to process image derivatives', 500, 'DERIVATIVE_PROCESSING_FAILED');
-  }
-
-  const achievementId = crypto.randomUUID();
-  const ext = validated.mimeType === 'image/jpeg' ? 'jpg' : validated.mimeType === 'image/png' ? 'png' : 'webp';
-  const originalKey = `originals/${achievementId}/original.${ext}`;
-  const displayKey = `derivatives/${achievementId}/display.webp`;
-  const thumbnailKey = `derivatives/${achievementId}/thumb.webp`;
-
-  // 5. Store permanent assets
-  try {
-    await storage.putObject(originalKey, quarantineData, {
-      contentType: validated.mimeType,
-      cacheControl: 'private, no-store',
-    });
-    await storage.putObject(displayKey, derivatives.displayBuffer, {
-      contentType: 'image/webp',
-      cacheControl: 'private, no-store',
-    });
-    await storage.putObject(thumbnailKey, derivatives.thumbnailBuffer, {
-      contentType: 'image/webp',
-      cacheControl: 'private, no-store',
-    });
-
-    // Clean up quarantine object
-    await storage.deleteObject(intent.quarantineKey).catch(() => {});
-  } catch (err) {
-    console.error('[STORAGE WRITE ERROR]', err);
-    return jsonError('Failed to store processed images', 500, 'STORAGE_WRITE_FAILED');
-  }
-
-  // 6. Persist records in DB
-  const assetId = crypto.randomUUID();
-
-  const [newAchievement] = await db
-    .insert(achievements)
-    .values({
-      id: achievementId,
-      title,
-      completionDate,
-      notes,
-      tags,
-      state: 'ready',
-    })
-    .returning();
-
-  const [newAsset] = await db
-    .insert(assets)
-    .values({
-      id: assetId,
-      achievementId,
-      originalKey,
-      displayKey,
-      thumbnailKey,
-      originalBytes: validated.byteLength,
-      mimeType: validated.mimeType,
-      width: validated.width,
-      height: validated.height,
-      checksum: validated.checksum,
-    })
-    .returning();
-
-  await db
-    .update(uploadIntents)
-    .set({ status: 'consumed', achievementId })
-    .where(eq(uploadIntents.id, intent.id));
-
-  if (!newAchievement || !newAsset) {
-    throw new Error('Failed to create achievement or asset record');
+  // One finalize implementation owns intent binding, idempotent replay, object
+  // cleanup, and storage accounting; this route only shapes the create response.
+  const result = await finalizeUpload(intentId, body);
+  if (!result.ok) {
+    return jsonError(result.message, result.status, result.code);
   }
 
   return jsonResponse(
-    {
-      ...newAchievement,
-      asset: {
-        id: newAsset.id,
-        width: newAsset.width,
-        height: newAsset.height,
-        originalBytes: newAsset.originalBytes,
-        mimeType: newAsset.mimeType,
-        checksum: newAsset.checksum,
-      },
-    },
+    { ...result.payload.achievement, asset: result.payload.asset },
     { status: 201 }
   );
 }

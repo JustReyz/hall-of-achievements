@@ -1058,6 +1058,7 @@ export default function HomePage() {
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         onSuccess={handleAddSuccess}
+        onSessionExpired={handleSessionExpired}
       />
 
       <AchievementDetailModal

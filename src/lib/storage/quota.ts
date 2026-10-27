@@ -1,4 +1,4 @@
-import { eq, and, gt, sql } from 'drizzle-orm';
+import { eq, and, gt, isNull, ne, sql } from 'drizzle-orm';
 import { AppDatabase } from '../db';
 import { uploadIntents, assets, UploadIntent } from '../db/schema';
 
@@ -42,7 +42,11 @@ export interface QuotaStats {
   totalAllowanceBytes: number;
   ceilingBytes: number;
   committedBytes: number;
+  /** Superseded asset versions whose objects are still stored. */
+  retiredBytes: number;
   reservedBytes: number;
+  /** Quarantine bytes left behind by an intent whose cleanup has not succeeded. */
+  orphanedQuarantineBytes: number;
   totalAccountedBytes: number;
   remainingCeilingBytes: number;
   activeIntentCount: number;
@@ -50,19 +54,33 @@ export interface QuotaStats {
 
 /**
  * Calculates current storage metrics against the 70% ceiling.
+ *
+ * Every byte the provider still holds is counted: live originals plus their
+ * derivative allowance, superseded versions awaiting cleanup, active
+ * reservations, and quarantine files whose deletion has not been confirmed.
  */
 export async function getStorageQuotaStats(db: AppDatabase): Promise<QuotaStats> {
   const now = new Date();
   const allowance = getProviderAllowanceBytes();
   const ceiling = getStorageCeilingBytes();
 
-  // 1. Sum committed bytes in ready assets (original + 2MB derivative bound)
-  const committedResult = await db
+  // 1. Sum committed bytes in assets (original + the 2 MiB derivative bound) and
+  // the conservative allowance of any superseded version still stored.
+  const assetRows = await db
     .select({
-      totalCommitted: sql<string>`COALESCE(SUM(${assets.originalBytes} + 2097152), 0)`,
+      originalBytes: assets.originalBytes,
+      retiredObjects: assets.retiredObjects,
     })
     .from(assets);
-  const committedBytes = Number(committedResult[0]?.totalCommitted ?? 0);
+
+  let committedBytes = 0;
+  let retiredBytes = 0;
+  for (const row of assetRows) {
+    committedBytes += row.originalBytes + MAX_DERIVATIVE_BOUND_BYTES;
+    for (const retired of row.retiredObjects) {
+      retiredBytes += retired.accountedBytes;
+    }
+  }
 
   // 2. Sum active pending reservations
   const pendingResult = await db
@@ -78,16 +96,34 @@ export async function getStorageQuotaStats(db: AppDatabase): Promise<QuotaStats>
       )
     );
 
-  const reservedBytes = Number(pendingResult[0]?.totalReserved ?? 0);
+  // 3. Quarantine files that outlived their intent because the delete failed.
+  // Their reservation stays counted until the removal is confirmed.
+  const orphanResult = await db
+    .select({
+      totalOrphaned: sql<string>`COALESCE(SUM(${uploadIntents.reservedBytes}), 0)`,
+    })
+    .from(uploadIntents)
+    .where(
+      and(
+        ne(uploadIntents.status, 'pending'),
+        isNull(uploadIntents.quarantineCleanedAt)
+      )
+    );
+
+  const pendingReservedBytes = Number(pendingResult[0]?.totalReserved ?? 0);
+  const orphanedQuarantineBytes = Number(orphanResult[0]?.totalOrphaned ?? 0);
   const activeIntentCount = Number(pendingResult[0]?.count ?? 0);
-  const totalAccountedBytes = committedBytes + reservedBytes;
+  const reservedBytes = pendingReservedBytes + orphanedQuarantineBytes;
+  const totalAccountedBytes = committedBytes + retiredBytes + reservedBytes;
   const remainingCeilingBytes = Math.max(0, ceiling - totalAccountedBytes);
 
   return {
     totalAllowanceBytes: allowance,
     ceilingBytes: ceiling,
     committedBytes,
+    retiredBytes,
     reservedBytes,
+    orphanedQuarantineBytes,
     totalAccountedBytes,
     remainingCeilingBytes,
     activeIntentCount,

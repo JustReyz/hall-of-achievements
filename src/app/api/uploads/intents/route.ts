@@ -63,9 +63,10 @@ export async function POST(request: NextRequest) {
     } catch (signingError) {
       // Rollback intent reservation to prevent quota leak and slot starvation
       try {
+        // No upload URL was ever issued, so no quarantine object exists to clean.
         await db
           .update(uploadIntents)
-          .set({ status: 'cleaned' })
+          .set({ status: 'cleaned', quarantineCleanedAt: new Date() })
           .where(eq(uploadIntents.id, intent.id));
       } catch (cleanupError) {
         console.error('[UPLOADS INTENT ROLLBACK FAILED]', cleanupError);
