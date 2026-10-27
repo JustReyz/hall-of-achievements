@@ -1,6 +1,6 @@
 # Feature plan: filter artwork by completion date
 
-Date: 2026-10-27. Status: implemented and verified in the working tree on 2026-10-27. The proposal below is retained as the design record; see [Verification evidence](#verification-evidence).
+Date: 2026-10-27. Status: implemented and verified on committed code (`f0b98ba`, `307d564`, `5f62415`) on 2026-10-27. The proposal below is retained as the design record; see [Verification evidence](#verification-evidence).
 
 The [implementation plan](superpowers/plans/2026-10-27-completion-date-filter.md) contains the ordered code changes, test examples, and verification steps that were followed.
 
@@ -14,6 +14,7 @@ Implementation matched the proposal: shared calendar validation, inclusive `from
 | --- | --- |
 | `npm ci` | Installed the locked dependency tree without changing the lockfile. |
 | Focused Vitest suite | 47 tests passed. |
+| Full `npm test` | 28 files and 286 tests passed after the implementation commits. |
 | `npm run typecheck` | Passed. |
 | `npm run build` | Passed. |
 | `git diff --check` | No whitespace errors. |
@@ -22,16 +23,15 @@ Implementation matched the proposal: shared calendar validation, inclusive `from
 npm test -- tests/unit/achievement-date-validation.test.ts tests/integration/gallery-pagination.test.ts tests/integration/gallery-empty-state.test.ts tests/integration/achievements-crud.test.ts tests/integration/uploads.test.ts tests/integration/accessibility-performance.test.ts
 ```
 
-Browser verification used headless Chrome through the DevTools protocol against `next dev --turbopack` and a local Postgres test archive. The script exercised 41 checks at 375x800 and 1280x900; all passed. It covered inclusive and open bounds, a single-date range, future filter bounds, text/date intersection, draft isolation, reversed-range feedback, clear-dates behavior, 32-record filtered pagination across same-date ties, filtered empty copy, first-page failure and retry, late first-page and late-append races, double-click append suppression, logout during a pending request, edit-outside-range and delete refreshes, 44 px targets, labels, keyboard order and focus, Enter submission, narrow layout, and absence of push, upload, or original-asset requests.
+Browser verification used headless Chrome through the DevTools protocol against `next dev --turbopack` and a fresh in-memory PGlite test archive seeded with 35 synthetic records. The script exercised 51 checks at 375x800 and 1280x900; all passed. It covered inclusive and open bounds, a single-date range, future filter bounds, text/date intersection, draft isolation, reversed-range feedback, clear-dates behavior, 32-record filtered pagination across same-date ties, filtered empty copy, first-page failure and retry, append failure and keyboard retry, late first-page and late-append races, double-click append suppression, logout and 401 expiry during pending requests, create inside and outside the active range, edit-outside-range and delete refreshes, 44 px targets, labels, keyboard order and focus at both widths, Enter submission, narrow layout, and absence of push, upload, or original-asset requests while filtering.
 
 Local evidence is kept outside the repository at `.agent-runtime/evidence/browser-report.json`, `.agent-runtime/evidence/gallery-375.png`, and `.agent-runtime/evidence/gallery-1280.png`.
 
-Skipped or partial browser checks:
+Skipped browser check:
 
-- Create inside and outside an active range, and restore, were not exercised in the browser. The synthetic fixture had no missing-image record. Create uses the same filtered first-page refresh as the verified edit and delete flows; restore reports through the verified edit callback. Existing CRUD and upload integration tests pass.
-- Append-failure retry was not exercised in the browser. First-page failure and retry were verified; append requests share the same retry path with a stored cursor.
-- A 401 session expiry during a gallery request was not exercised in the browser. Logout during a pending request and unauthenticated API denial were verified.
-- The retry control was activated programmatically rather than by keyboard. Tab order and visible focus were verified through Clear dates at 375 px; the 1280 px layout was captured but not re-tabbed.
+- Restore was not exercised in the browser. The synthetic fixture had no missing-image record. Restore reports through the same edit callback verified in the browser, and the CRUD and upload integration tests pass.
+
+The browser script mutates the synthetic archive, so repeating it requires restarting the dev server to reset PGlite and rerunning `.agent-runtime/seed.mjs`.
 
 ## Recommendation
 
@@ -141,10 +141,11 @@ Then verify the interactive cases in a local test archive. Use synthetic records
 - [x] More than 24 matching records, including same-date ties, paginate without duplicates or omissions when records are unchanged.
 - [x] Changing filters resets the cursor. Rapid changes and an in-flight Load More request cannot mix filters or overwrite newer results.
 - [x] Clear dates preserves search. A date-only empty result shows the filtered empty state. Counts describe loaded results.
-- [ ] Create and edit operations respect the active range and ordering. Editing an item outside the range removes it from the gallery after refresh. Restore and delete refresh safely. **Partial:** edit-outside-range and delete were verified in the browser; create and restore were not.
-- [ ] Failed first-page and pagination requests show an error and permit retry without losing inputs or appending duplicate results. **Partial:** first-page failure and retry were verified; append failure and retry were not browser-tested.
+- [x] Create and edit operations respect the active range and ordering. Editing an item outside the range removes it from the gallery after refresh. Delete refreshes safely.
+- [ ] Restore refreshes safely. **Partial:** restore was not browser-tested because the synthetic fixture had no missing-image record; the CRUD and upload integration tests pass.
+- [x] Failed first-page and pagination requests show an error and permit retry without losing inputs or appending duplicate results.
 - [x] An unauthenticated filtered request is denied. Successful and error responses retain private cache headers.
-- [ ] Keyboard and narrow-screen checks pass for labels, Apply, Clear, focus, validation feedback, and retry. Filters cause no notification prompt, push send, or original-image download. **Partial:** labels, focus, Enter submission, validation feedback, narrow layout, and side effects were verified; retry was activated programmatically and desktop tab order was not repeated.
+- [x] Keyboard and narrow-screen checks pass for labels, Apply, Clear, focus, validation feedback, and retry. Filters cause no notification prompt, push send, or original-image download.
 
 ## Limits and rollback
 
