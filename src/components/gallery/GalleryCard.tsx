@@ -12,6 +12,12 @@ export function GalleryCard({ achievement, onClick }: GalleryCardProps) {
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [imageLoading, setImageLoading] = useState(true);
   const [imageFailed, setImageFailed] = useState(false);
+  const thumbnailPositionX = Number.isFinite(achievement.thumbnailPositionX)
+    ? achievement.thumbnailPositionX
+    : 0.5;
+  const thumbnailPositionY = Number.isFinite(achievement.thumbnailPositionY)
+    ? achievement.thumbnailPositionY
+    : 0.5;
 
   // Re-resolve the signed URL whenever the artwork changes (for example after a
   // missing image is restored from the detail modal).
@@ -143,6 +149,7 @@ export function GalleryCard({ achievement, onClick }: GalleryCardProps) {
               width: '100%',
               height: '100%',
               objectFit: 'cover',
+              objectPosition: `${thumbnailPositionX * 100}% ${thumbnailPositionY * 100}%`,
               opacity: imageLoading ? 0 : 1,
               transition: 'opacity 0.2s ease',
             }}

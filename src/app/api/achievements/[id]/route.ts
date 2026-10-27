@@ -9,6 +9,7 @@ import {
   validateCompletionDate,
   validateNotes,
   validateTags,
+  validateThumbnailPosition,
   ValidationError,
 } from '@/lib/validation/achievement';
 
@@ -31,6 +32,8 @@ export async function GET(
         completionDate: achievements.completionDate,
         notes: achievements.notes,
         tags: achievements.tags,
+        thumbnailPositionX: achievements.thumbnailPositionX,
+        thumbnailPositionY: achievements.thumbnailPositionY,
         state: achievements.state,
         createdAt: achievements.createdAt,
         updatedAt: achievements.updatedAt,
@@ -107,6 +110,12 @@ export async function PATCH(
     }
     if (body.tags !== undefined) {
       updates.tags = validateTags(body.tags);
+    }
+    if (body.thumbnailPositionX !== undefined) {
+      updates.thumbnailPositionX = validateThumbnailPosition(body.thumbnailPositionX, 'x');
+    }
+    if (body.thumbnailPositionY !== undefined) {
+      updates.thumbnailPositionY = validateThumbnailPosition(body.thumbnailPositionY, 'y');
     }
   } catch (err: unknown) {
     if (err instanceof ValidationError) {

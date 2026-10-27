@@ -11,6 +11,8 @@ export interface AchievementItem {
   completionDate: string;
   notes: string | null;
   tags: string[];
+  thumbnailPositionX: number;
+  thumbnailPositionY: number;
   state: 'pending' | 'ready' | 'deleting';
   createdAt: string;
   updatedAt?: string;

@@ -13,6 +13,7 @@ import {
   type Asset,
 } from '../db/schema';
 import type { ExportManifest } from './export';
+import { isValidThumbnailPosition } from '../validation/achievement';
 
 export interface RestoreOptions {
   inputDir: string;
@@ -206,9 +207,9 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     );
   }
 
-  if (manifest.version !== 1) {
+  if (manifest.version !== 1 && manifest.version !== 2) {
     throw new IntegrityError(
-      `Unsupported manifest schema version: ${manifest.version}. Expected version 1.`
+      `Unsupported manifest schema version: ${manifest.version}. Supported versions are 1 and 2.`
     );
   }
 
@@ -289,6 +290,19 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     throw new IntegrityError('metadata/achievements.json must contain an array of achievements.');
   }
 
+  if (manifest.version === 2) {
+    for (const achievement of rawAchievements) {
+      if (
+        !isValidThumbnailPosition(achievement.thumbnailPositionX) ||
+        !isValidThumbnailPosition(achievement.thumbnailPositionY)
+      ) {
+        throw new IntegrityError(
+          `Achievement '${achievement.id}' has invalid thumbnail framing values. Expected finite numbers between 0 and 1.`
+        );
+      }
+    }
+  }
+
   const assetsBuf = fileBuffers.get('metadata/assets.json');
   if (!assetsBuf) {
     throw new IntegrityError('Missing metadata/assets.json in verified archive.');
@@ -317,6 +331,9 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
   // 5. Atomic database transaction: ingest achievements, assets, and apply security invalidations atomically
   await db.transaction(async (tx) => {
     for (const a of rawAchievements) {
+      const thumbnailPositionX = manifest.version === 1 ? 0.5 : a.thumbnailPositionX;
+      const thumbnailPositionY = manifest.version === 1 ? 0.5 : a.thumbnailPositionY;
+
       await tx
         .insert(achievements)
         .values({
@@ -325,6 +342,8 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
           completionDate: a.completionDate,
           notes: a.notes,
           tags: a.tags,
+          thumbnailPositionX,
+          thumbnailPositionY,
           state: a.state,
           createdAt: new Date(a.createdAt),
           updatedAt: new Date(a.updatedAt),
@@ -336,6 +355,8 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
             completionDate: a.completionDate,
             notes: a.notes,
             tags: a.tags,
+            thumbnailPositionX,
+            thumbnailPositionY,
             state: a.state,
             updatedAt: new Date(a.updatedAt),
           },

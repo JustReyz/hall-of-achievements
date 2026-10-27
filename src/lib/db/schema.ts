@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   pgTable,
   integer,
@@ -10,6 +11,8 @@ import {
   varchar,
   date,
   customType,
+  real,
+  check,
 } from 'drizzle-orm/pg-core';
 
 /**
@@ -81,6 +84,8 @@ export const achievements = pgTable(
     completionDate: date('completion_date').notNull(),
     notes: text('notes'),
     tags: jsonb('tags').$type<string[]>().notNull().default([]),
+    thumbnailPositionX: real('thumbnail_position_x').notNull().default(0.5),
+    thumbnailPositionY: real('thumbnail_position_y').notNull().default(0.5),
     state: text('state')
       .$type<'pending' | 'ready' | 'deleting'>()
       .notNull()
@@ -93,6 +98,14 @@ export const achievements = pgTable(
       .defaultNow(),
   },
   (table) => [
+    check(
+      'achievements_thumbnail_position_x_check',
+      sql`${table.thumbnailPositionX} >= 0 AND ${table.thumbnailPositionX} <= 1`
+    ),
+    check(
+      'achievements_thumbnail_position_y_check',
+      sql`${table.thumbnailPositionY} >= 0 AND ${table.thumbnailPositionY} <= 1`
+    ),
     index('idx_achievements_state_cursor').on(
       table.state,
       table.completionDate.desc(),

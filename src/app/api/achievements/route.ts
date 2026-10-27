@@ -78,6 +78,8 @@ export async function GET(request: NextRequest) {
         completionDate: achievements.completionDate,
         notes: achievements.notes,
         tags: achievements.tags,
+        thumbnailPositionX: achievements.thumbnailPositionX,
+        thumbnailPositionY: achievements.thumbnailPositionY,
         state: achievements.state,
         createdAt: achievements.createdAt,
         updatedAt: achievements.updatedAt,

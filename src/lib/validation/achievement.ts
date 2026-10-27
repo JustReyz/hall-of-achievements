@@ -152,6 +152,21 @@ export function validateTagFilter(tag: unknown): string {
   return normalizeTagValue(tag);
 }
 
+export function isValidThumbnailPosition(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+export function validateThumbnailPosition(value: unknown, axis: 'x' | 'y'): number {
+  if (!isValidThumbnailPosition(value)) {
+    throw new ValidationError(
+      'INVALID_THUMBNAIL_POSITION',
+      `Thumbnail position ${axis} must be a finite number between 0 and 1.`
+    );
+  }
+
+  return value;
+}
+
 export function validateTags(tags: unknown): string[] {
   if (tags === undefined || tags === null) {
     return [];

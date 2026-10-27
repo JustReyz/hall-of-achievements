@@ -71,6 +71,6 @@ Arrange related artworks into an ordered series or project. Removing a collectio
 
 ## 16. Thumbnail framing
 
-Status: selected by the owner, included in the implementation plan.
+Status: implemented 2026-10-27 (Phase 3); focused tests and browser checks passed.
 
 Choose how an artwork is framed in its gallery card without changing the original image.

@@ -135,8 +135,8 @@ conditions.push(sql`${achievements.tags} @> ${JSON.stringify([filters.tag])}::js
 
 **Create:** `src/lib/db/schema-upgrades.ts`, `tests/integration/thumbnail-framing.test.ts`, `tests/integration/archive-migrations.test.ts`.
 
-- [ ] Add `thumbnailPositionX` and `thumbnailPositionY` as finite real values between 0 and 1, defaulting to 0.5. Add database range constraints and matching API validation. Reject strings, null, infinity, and out-of-range values rather than silently clamping writes.
-- [ ] Put idempotent upgrade SQL in `applyArchiveSchemaUpgrades(client)` in `schema-upgrades.ts`. Call it from both existing initialization branches. The existing locked `db:migrate` entry point must execute these upgrades and propagate failure. Add only each phase's required SQL when implementing that phase.
+- [x] Add `thumbnailPositionX` and `thumbnailPositionY` as finite real values between 0 and 1, defaulting to 0.5. Add database range constraints and matching API validation. Reject strings, null, infinity, and out-of-range values rather than silently clamping writes.
+- [x] Put idempotent upgrade SQL in `applyArchiveSchemaUpgrades(client)` in `schema-upgrades.ts`. Call it from both existing initialization branches. The existing locked `db:migrate` entry point must execute these upgrades and propagate failure. Add only each phase's required SQL when implementing that phase.
 
 ```sql
 ALTER TABLE achievements ADD COLUMN IF NOT EXISTS thumbnail_position_x REAL NOT NULL DEFAULT 0.5;
@@ -145,16 +145,16 @@ ALTER TABLE achievements ADD COLUMN IF NOT EXISTS thumbnail_position_y REAL NOT 
 
 Add the two range constraints using named, idempotently installed constraints in the same upgrade. Keep Drizzle declarations and runtime SQL consistent.
 
-- [ ] Include both values in gallery and item responses. Reuse the detail PATCH endpoint and its authenticated metadata-save path.
-- [ ] Add horizontal and vertical sliders with a 4:3 preview and Center action. A keyboard user can change either axis and save. Preserve draft framing when saving fails.
-- [ ] Apply framing only to the gallery card. Keep the full display image and downloadable original unchanged.
+- [x] Include both values in gallery and item responses. Reuse the detail PATCH endpoint and its authenticated metadata-save path.
+- [x] Add horizontal and vertical sliders with a 4:3 preview and Center action. A keyboard user can change either axis and save. Preserve draft framing when saving fails.
+- [x] Apply framing only to the gallery card. Keep the full display image and downloadable original unchanged.
 
 ```tsx
 objectPosition: `${achievement.thumbnailPositionX * 100}% ${achievement.thumbnailPositionY * 100}%`
 ```
 
-- [ ] Add the fields to backup and restore. Write archive version 2 and accept version 1 with centered defaults. Newer unknown archive versions must fail before changing storage or the database.
-- [ ] Test an existing pre-feature database upgrade, repeat execution, fresh PGlite initialization, and the pooled migration path. Do not assume `CREATE TABLE IF NOT EXISTS` upgrades existing rows.
+- [x] Add the fields to backup and restore. Write archive version 2 and accept version 1 with centered defaults. Newer unknown archive versions must fail before changing storage or the database.
+- [x] Test an existing pre-feature database upgrade, repeat execution, fresh PGlite initialization, and the pooled migration path. Do not assume `CREATE TABLE IF NOT EXISTS` upgrades existing rows.
 
 **Proof:** A saved non-center value survives refresh and backup/restore. Original and derivative checksums do not change. Range validation is enforced at both API and database boundaries. Test the pure condition `typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1`, including NaN before JSON serialization. Existing cards default to centered framing.
 
@@ -407,6 +407,19 @@ Deployments and production migration execution are separate work. This plan does
 - The harness initially exposed a race: `SearchBar` re-emits its debounced cleared query, and `applyFilters` closed the open detail dialog even when the filter set was unchanged. `applyFilters` and `handleSelectTag` now return early for an identical filter set; the add/remove edit-requery checks then kept the detail dialog open until explicitly closed.
 - Final SUMMARY: 33 checks, 0 failures, 19 tag requests, 464 asset requests, 0 `type=original` requests.
 - Skipped/deferred: trashed-record exclusion in the shared predicate is added once in Phase 7; collection scope in Phase 8; contact-sheet selection clearing in Phase 4.
+
+### Phase 3 (2026-10-27)
+
+- `npm run typecheck`: passed (`tsc --noEmit`, no diagnostics).
+- `npx vitest run tests/integration/archive-migrations.test.ts`: 6/6 tests passed in 8.61s. Covered a pre-feature database with an existing row, repeated execution, fresh PGlite initialization, a query-only pooled-style client, failure propagation, and the locked `db:migrate` path including its advisory lock and teardown.
+- `npx vitest run tests/integration/thumbnail-framing.test.ts`: 8/8 tests passed in 13.05s. Covered finite-range validation, centered defaults, persistence through item and gallery queries, invalid API payloads (`null`, strings, infinity, out of range), database constraints, archive version 2 round-trip, version 1 centered restore, and rejection of a newer version before database or storage mutation.
+- `npx vitest run tests/integration/export-restore.test.ts`: 15/15 tests passed in 26.72s after updating the writer expectation to archive version 2.
+- Focused regression suites: `npx vitest run tests/integration/achievements-crud.test.ts tests/integration/gallery-pagination.test.ts tests/integration/tag-browser.test.ts tests/integration/gallery-empty-state.test.ts tests/integration/accessibility-performance.test.ts tests/integration/adversarial-m2-gallery.test.ts` passed 56/56 tests in 6 files.
+- Browser harness: `node .agent-runtime/phase3-browser-check.mjs` passed 11/11 checks at 1280×900 desktop and 390×844 mobile. Evidence: `.agent-runtime/evidence/phase3-browser-report.json`, `phase3-framing-desktop.png`, `phase3-framing-mobile.png`.
+- Browser environment: dev server restarted after the schema change; synthetic in-memory PGlite database and `MemoryStorageAdapter`; 35 records recreated through the authenticated dev API (`node .agent-runtime/seed.mjs`). The `After` fixture was reset to centered framing before the run and left centered afterward.
+- Verified in the browser: an existing card defaults to `50% 50%`; the full display image remains `object-fit: contain` with no framing style; keyboard arrows change both axes; Center resets both to 50%; the 4:3 preview follows the 25%/75% draft; an intercepted failed save preserves that draft and keeps the editor open; retry saves and the gallery card applies `25% 75%`; a hard reload preserves both values; mobile framing controls have no horizontal overflow with a 300px preview and 44px sliders and Center control; 148 derivative asset requests and 0 `type=original` requests.
+- The seeded thumbnails are flat-color synthetic images, so browser framing evidence reads computed `object-position` and persistence rather than a visually distinguishable crop; the storage-level checksum and derivative-byte assertions in `thumbnail-framing.test.ts` cover unchanged originals and derivatives.
+- Skipped/deferred: applying the upgrade to a real production or copied PostgreSQL database remains a deployment step; this phase proved the same SQL against PGlite and the pooled `db:migrate` path. Trashed-record exclusion remains for Phase 7.
 
 ## Completion condition
 

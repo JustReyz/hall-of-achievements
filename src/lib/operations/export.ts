@@ -13,6 +13,8 @@ export interface ManifestFileEntry {
   sha256: string;
 }
 
+export const ARCHIVE_VERSION = 2;
+
 export interface ExportManifest {
   version: number;
   exportedAt: string;
@@ -144,7 +146,7 @@ export async function exportArchive(options: ExportOptions = {}): Promise<Export
 
   // 7. Generate manifest.json
   const manifest: ExportManifest = {
-    version: 1,
+    version: ARCHIVE_VERSION,
     exportedAt: new Date().toISOString(),
     metadata: {
       achievementsCount: readyAchievements.length,

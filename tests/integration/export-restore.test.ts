@@ -153,7 +153,7 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
     expect(exportRes.achievementsCount).toBe(2);
     expect(exportRes.assetsCount).toBe(2);
     expect(exportRes.filesCount).toBe(8); // 2 metadata + 6 binary assets
-    expect(exportRes.manifest.version).toBe(1);
+    expect(exportRes.manifest.version).toBe(2);
 
     // Verify disk structure
     const manifestPath = path.join(exportDir, 'manifest.json');

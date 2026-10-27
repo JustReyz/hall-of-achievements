@@ -71,6 +71,8 @@ export function AchievementDetailModal({
   const [editDate, setEditDate] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [editTags, setEditTags] = useState('');
+  const [editThumbnailPositionX, setEditThumbnailPositionX] = useState(0.5);
+  const [editThumbnailPositionY, setEditThumbnailPositionY] = useState(0.5);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +89,12 @@ export function AchievementDetailModal({
     setEditDate(achievement.completionDate);
     setEditNotes(achievement.notes || '');
     setEditTags(achievement.tags.join(', '));
+    setEditThumbnailPositionX(
+      Number.isFinite(achievement.thumbnailPositionX) ? achievement.thumbnailPositionX : 0.5
+    );
+    setEditThumbnailPositionY(
+      Number.isFinite(achievement.thumbnailPositionY) ? achievement.thumbnailPositionY : 0.5
+    );
     setIsEditing(false);
     setError(null);
 
@@ -284,6 +292,8 @@ export function AchievementDetailModal({
           completionDate: editDate,
           notes: editNotes.trim(),
           tags: parsedTags,
+          thumbnailPositionX: editThumbnailPositionX,
+          thumbnailPositionY: editThumbnailPositionY,
           timezone: clientTimezone,
         }),
       });
@@ -812,6 +822,110 @@ export function AchievementDetailModal({
                       resize: 'vertical',
                     }}
                   />
+                </div>
+
+                <div style={{ marginBottom: 20 }}>
+                  <span style={{ display: 'block', fontWeight: 600, fontSize: '13px', color: '#334155', marginBottom: 6 }}>
+                    Gallery Thumbnail Framing
+                  </span>
+                  <div
+                    style={{
+                      width: '100%',
+                      maxWidth: 320,
+                      aspectRatio: '4 / 3',
+                      backgroundColor: '#f1f5f9',
+                      borderRadius: 8,
+                      border: '1px solid #cbd5e1',
+                      overflow: 'hidden',
+                      marginBottom: 10,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    {displayUrl ? (
+                      <img
+                        data-thumbnail-preview
+                        src={displayUrl}
+                        alt="Gallery thumbnail framing preview"
+                        style={{
+                          display: 'block',
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                          objectPosition: `${editThumbnailPositionX * 100}% ${editThumbnailPositionY * 100}%`,
+                        }}
+                      />
+                    ) : (
+                      <span style={{ color: '#64748b', fontSize: '13px' }}>
+                        {imageLoading ? 'Loading preview...' : 'Preview unavailable'}
+                      </span>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
+                    <label
+                      htmlFor="edit-thumbnail-position-x"
+                      style={{ flex: '1 1 180px', minWidth: 160, fontSize: '13px', color: '#334155' }}
+                    >
+                      <span style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
+                        Horizontal ({Math.round(editThumbnailPositionX * 100)}%)
+                      </span>
+                      <input
+                        id="edit-thumbnail-position-x"
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={editThumbnailPositionX}
+                        aria-valuetext={`${Math.round(editThumbnailPositionX * 100)}%`}
+                        onChange={(e) => setEditThumbnailPositionX(Number(e.target.value))}
+                        style={{ width: '100%', minHeight: 44, accentColor: '#2563eb' }}
+                      />
+                    </label>
+                    <label
+                      htmlFor="edit-thumbnail-position-y"
+                      style={{ flex: '1 1 180px', minWidth: 160, fontSize: '13px', color: '#334155' }}
+                    >
+                      <span style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
+                        Vertical ({Math.round(editThumbnailPositionY * 100)}%)
+                      </span>
+                      <input
+                        id="edit-thumbnail-position-y"
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={editThumbnailPositionY}
+                        aria-valuetext={`${Math.round(editThumbnailPositionY * 100)}%`}
+                        onChange={(e) => setEditThumbnailPositionY(Number(e.target.value))}
+                        style={{ width: '100%', minHeight: 44, accentColor: '#2563eb' }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditThumbnailPositionX(0.5);
+                        setEditThumbnailPositionY(0.5);
+                      }}
+                      style={{
+                        minHeight: 44,
+                        padding: '8px 16px',
+                        backgroundColor: '#f8fafc',
+                        color: '#334155',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: 6,
+                        fontWeight: 600,
+                        fontSize: '13px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Center
+                    </button>
+                  </div>
+                  <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#64748b' }}>
+                    Framing changes only the gallery card. The full artwork and original download stay unchanged.
+                  </p>
                 </div>
 
                 <div style={{ marginBottom: 20 }}>

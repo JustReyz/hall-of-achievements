@@ -1,4 +1,5 @@
 import * as schema from './schema';
+import { applyArchiveSchemaUpgrades } from './schema-upgrades';
 import { env } from '../env';
 
 // For offline / hermetic testing and development without live PostgreSQL
@@ -202,6 +203,7 @@ export async function initTables(client: {
       );
       CREATE INDEX IF NOT EXISTS idx_storage_objects_created ON storage_objects (created_at);
     `);
+    await applyArchiveSchemaUpgrades(client);
     return;
   }
 
@@ -242,6 +244,12 @@ export async function initTables(client: {
       completion_date DATE NOT NULL,
       notes TEXT,
       tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      thumbnail_position_x REAL NOT NULL DEFAULT 0.5
+        CONSTRAINT achievements_thumbnail_position_x_check
+        CHECK (thumbnail_position_x >= 0 AND thumbnail_position_x <= 1),
+      thumbnail_position_y REAL NOT NULL DEFAULT 0.5
+        CONSTRAINT achievements_thumbnail_position_y_check
+        CHECK (thumbnail_position_y >= 0 AND thumbnail_position_y <= 1),
       state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'ready', 'deleting')),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -324,6 +332,8 @@ export async function initTables(client: {
   for (const stmt of statements) {
     await client.query(stmt);
   }
+
+  await applyArchiveSchemaUpgrades(client);
 }
 
 /**
