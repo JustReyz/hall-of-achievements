@@ -13,6 +13,8 @@ import {
   customType,
   real,
   check,
+  primaryKey,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 
 /**
@@ -198,6 +200,51 @@ export type InsertAsset = typeof assets.$inferInsert;
 
 export type UploadIntent = typeof uploadIntents.$inferSelect;
 export type InsertUploadIntent = typeof uploadIntents.$inferInsert;
+
+/**
+ * Curated collections. The revision counter invalidates curated cursors and
+ * order writes that were prepared against an older membership list.
+ */
+export const collections = pgTable(
+  'collections',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: varchar('name', { length: 120 }).notNull(),
+    revision: integer('revision').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index('idx_collections_created').on(table.createdAt.desc())]
+);
+
+/**
+ * Ordered membership. Removing a collection removes only these rows; removing a
+ * member never removes artwork. Permanent purge cascades through achievementId.
+ */
+export const collectionItems = pgTable(
+  'collection_items',
+  {
+    collectionId: uuid('collection_id')
+      .notNull()
+      .references(() => collections.id, { onDelete: 'cascade' }),
+    achievementId: uuid('achievement_id')
+      .notNull()
+      .references(() => achievements.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.collectionId, table.achievementId] }),
+    uniqueIndex('idx_collection_items_position').on(table.collectionId, table.position),
+    index('idx_collection_items_achievement').on(table.achievementId),
+  ]
+);
+
+export type Collection = typeof collections.$inferSelect;
+export type CollectionItem = typeof collectionItems.$inferSelect;
 
 /**
  * Web push subscriptions authorized by the authenticated owner.

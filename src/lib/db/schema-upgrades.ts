@@ -45,6 +45,24 @@ const ARCHIVE_SCHEMA_UPGRADES = [
   `ALTER TABLE achievements
     ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMPTZ`,
   `CREATE INDEX IF NOT EXISTS idx_achievements_trashed_at ON achievements (trashed_at)`,
+  `CREATE TABLE IF NOT EXISTS collections (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(120) NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_collections_created ON collections (created_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS collection_items (
+    collection_id UUID NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    achievement_id UUID NOT NULL REFERENCES achievements(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (collection_id, achievement_id)
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_collection_items_position
+    ON collection_items (collection_id, position)`,
+  `CREATE INDEX IF NOT EXISTS idx_collection_items_achievement
+    ON collection_items (achievement_id)`,
 ];
 
 export async function applyArchiveSchemaUpgrades(client: UpgradeClient): Promise<void> {

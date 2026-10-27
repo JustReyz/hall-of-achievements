@@ -5,7 +5,13 @@ import { eq, inArray, asc } from 'drizzle-orm';
 import { getDb, type AppDatabase } from '../db';
 import { getStorage } from '../storage';
 import { StorageAdapter } from '../storage/adapter';
-import { achievements, assets, type Asset } from '../db/schema';
+import {
+  achievements,
+  assets,
+  collectionItems,
+  collections,
+  type Asset,
+} from '../db/schema';
 
 export interface ManifestFileEntry {
   path: string;
@@ -13,7 +19,7 @@ export interface ManifestFileEntry {
   sha256: string;
 }
 
-export const ARCHIVE_VERSION = 3;
+export const ARCHIVE_VERSION = 4;
 
 export interface ExportManifest {
   version: number;
@@ -164,6 +170,50 @@ export async function exportArchive(options: ExportOptions = {}): Promise<Export
     sha256: assetsHash,
   });
   totalSizeBytes += assetsBuf.length;
+
+  // metadata/collections.json: curated membership, including trashed members
+  const collectionRows = await db
+    .select()
+    .from(collections)
+    .orderBy(asc(collections.createdAt));
+  const membershipRows = await db
+    .select({
+      collectionId: collectionItems.collectionId,
+      achievementId: collectionItems.achievementId,
+      position: collectionItems.position,
+    })
+    .from(collectionItems)
+    .orderBy(asc(collectionItems.collectionId), asc(collectionItems.position));
+
+  const membershipByCollection = new Map<
+    string,
+    Array<{ achievementId: string; position: number }>
+  >();
+  for (const membership of membershipRows) {
+    const list = membershipByCollection.get(membership.collectionId) ?? [];
+    list.push({ achievementId: membership.achievementId, position: membership.position });
+    membershipByCollection.set(membership.collectionId, list);
+  }
+
+  const collectionPayload = collectionRows.map((collection) => ({
+    id: collection.id,
+    name: collection.name,
+    revision: collection.revision,
+    createdAt: collection.createdAt,
+    updatedAt: collection.updatedAt,
+    items: membershipByCollection.get(collection.id) ?? [],
+  }));
+
+  const collectionsJson = JSON.stringify(collectionPayload, null, indent);
+  const collectionsBuf = Buffer.from(collectionsJson, 'utf-8');
+  const collectionsHash = crypto.createHash('sha256').update(collectionsBuf).digest('hex');
+  fs.writeFileSync(path.join(targetDir, 'metadata', 'collections.json'), collectionsBuf);
+  files.splice(2, 0, {
+    path: 'metadata/collections.json',
+    size: collectionsBuf.length,
+    sha256: collectionsHash,
+  });
+  totalSizeBytes += collectionsBuf.length;
 
   // 7. Generate manifest.json
   const manifest: ExportManifest = {

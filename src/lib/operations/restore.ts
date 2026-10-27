@@ -1,17 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import { getDb, type AppDatabase } from '../db';
 import { getStorage } from '../storage';
 import { StorageAdapter } from '../storage/adapter';
 import {
   achievements,
   assets,
+  collectionItems,
+  collections,
   sessions,
   pushSubscriptions,
   type Achievement,
   type Asset,
 } from '../db/schema';
+import { MAX_COLLECTION_MEMBERS, MAX_COLLECTION_NAME_LENGTH } from '../validation/collection';
 import type { ExportManifest } from './export';
 import { isValidThumbnailPosition } from '../validation/achievement';
 
@@ -207,9 +211,9 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     );
   }
 
-  if (manifest.version !== 1 && manifest.version !== 2 && manifest.version !== 3) {
+  if (![1, 2, 3, 4].includes(manifest.version)) {
     throw new IntegrityError(
-      `Unsupported manifest schema version: ${manifest.version}. Supported versions are 1, 2, and 3.`
+      `Unsupported manifest schema version: ${manifest.version}. Supported versions are 1, 2, 3, and 4.`
     );
   }
 
@@ -232,9 +236,10 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     // Whitelist allowed manifest file locations
     const isAchievementsMeta = entry.path === 'metadata/achievements.json';
     const isAssetsMeta = entry.path === 'metadata/assets.json';
+    const isCollectionsMeta = entry.path === 'metadata/collections.json';
     const isAsset = entry.path.startsWith('assets/');
 
-    if (!isAchievementsMeta && !isAssetsMeta && !isAsset) {
+    if (!isAchievementsMeta && !isAssetsMeta && !isCollectionsMeta && !isAsset) {
       throw new IntegrityError(
         `Path traversal attempt detected: unexpected file location '${entry.path}'. Only metadata/ and assets/ entries are permitted.`
       );
@@ -342,6 +347,107 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     assertSafeStorageKey(asset.thumbnailKey, 'Asset thumbnailKey');
   }
 
+  // Curated collections are validated against the archived artwork IDs before
+  // any database or storage mutation.
+  const achievementIds = new Set(rawAchievements.map((achievement) => achievement.id));
+  let archiveCollections: Array<{
+    id: string;
+    name: string;
+    revision: number;
+    createdAt: string;
+    updatedAt: string;
+    items: Array<{ achievementId: string; position: number }>;
+  }> = [];
+
+  if (manifest.version >= 4) {
+    const collectionsBuf = fileBuffers.get('metadata/collections.json');
+    if (!collectionsBuf) {
+      throw new IntegrityError('Missing metadata/collections.json in a version 4 archive.');
+    }
+
+    let parsedCollections: unknown;
+    try {
+      parsedCollections = JSON.parse(collectionsBuf.toString('utf-8'));
+    } catch (err) {
+      throw new IntegrityError(
+        `Failed to parse metadata/collections.json: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    if (!Array.isArray(parsedCollections)) {
+      throw new IntegrityError('metadata/collections.json must contain an array of collections.');
+    }
+
+    const seenCollections = new Set<string>();
+    archiveCollections = parsedCollections.map((entry: unknown) => {
+      if (typeof entry !== 'object' || entry === null) {
+        throw new IntegrityError('Every collection entry must be an object.');
+      }
+      const raw = entry as Record<string, unknown>;
+      const id = String(raw.id ?? '');
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+        throw new IntegrityError(`Collection '${id}' has an invalid identifier.`);
+      }
+      if (seenCollections.has(id)) {
+        throw new IntegrityError(`Collection '${id}' appears twice in the manifest.`);
+      }
+      seenCollections.add(id);
+
+      const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+      if (name.length === 0 || name.length > MAX_COLLECTION_NAME_LENGTH) {
+        throw new IntegrityError(`Collection '${id}' has an invalid name.`);
+      }
+      if (typeof raw.revision !== 'number' || !Number.isInteger(raw.revision) || raw.revision < 0) {
+        throw new IntegrityError(`Collection '${id}' has an invalid revision.`);
+      }
+      if (!Array.isArray(raw.items)) {
+        throw new IntegrityError(`Collection '${id}' has an invalid membership list.`);
+      }
+      if (raw.items.length > MAX_COLLECTION_MEMBERS) {
+        throw new IntegrityError(`Collection '${id}' exceeds the member limit.`);
+      }
+
+      const seenAchievements = new Set<string>();
+      const seenPositions = new Set<number>();
+      const items = raw.items.map((item: unknown) => {
+        if (typeof item !== 'object' || item === null) {
+          throw new IntegrityError(`Collection '${id}' has an invalid membership entry.`);
+        }
+        const membership = item as Record<string, unknown>;
+        const achievementId = String(membership.achievementId ?? '');
+        const position = membership.position;
+
+        if (!achievementIds.has(achievementId)) {
+          throw new IntegrityError(
+            `Collection '${id}' references artwork '${achievementId}' that is not in the archive.`
+          );
+        }
+        if (seenAchievements.has(achievementId)) {
+          throw new IntegrityError(`Collection '${id}' lists artwork '${achievementId}' twice.`);
+        }
+        if (typeof position !== 'number' || !Number.isInteger(position) || position < 0) {
+          throw new IntegrityError(`Collection '${id}' has an invalid member position.`);
+        }
+        if (seenPositions.has(position)) {
+          throw new IntegrityError(`Collection '${id}' uses position ${position} twice.`);
+        }
+
+        seenAchievements.add(achievementId);
+        seenPositions.add(position);
+        return { achievementId, position };
+      });
+
+      return {
+        id,
+        name,
+        revision: raw.revision,
+        createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : new Date().toISOString(),
+        updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : new Date().toISOString(),
+        items,
+      };
+    });
+  }
+
   // 5. Atomic database transaction: ingest achievements, assets, and apply security invalidations atomically
   await db.transaction(async (tx) => {
     for (const a of rawAchievements) {
@@ -413,6 +519,38 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
         });
     }
 
+    for (const collection of archiveCollections) {
+      await tx
+        .insert(collections)
+        .values({
+          id: collection.id,
+          name: collection.name,
+          revision: collection.revision,
+          createdAt: new Date(collection.createdAt),
+          updatedAt: new Date(collection.updatedAt),
+        })
+        .onConflictDoUpdate({
+          target: collections.id,
+          set: {
+            name: collection.name,
+            revision: collection.revision,
+            updatedAt: new Date(collection.updatedAt),
+          },
+        });
+
+      // Replace membership wholesale so a restore cannot leave stale entries.
+      await tx.delete(collectionItems).where(eq(collectionItems.collectionId, collection.id));
+      if (collection.items.length > 0) {
+        await tx.insert(collectionItems).values(
+          collection.items.map((item) => ({
+            collectionId: collection.id,
+            achievementId: item.achievementId,
+            position: item.position,
+          }))
+        );
+      }
+    }
+
     // Post-restore security guarantees: invalidate all target sessions and disable push subscriptions
     await tx.update(sessions).set({
       revoked: true,
@@ -450,7 +588,8 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     manifest,
     achievementsRestored: rawAchievements.length,
     assetsRestored: rawAssets.length,
-    filesRestored: binaryFilesRestored + 2,
+    filesRestored:
+      binaryFilesRestored + manifest.files.filter((entry) => entry.path.startsWith('metadata/')).length,
     totalSizeBytes: manifest.metadata.totalSizeBytes,
   };
 }

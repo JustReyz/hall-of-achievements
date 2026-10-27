@@ -73,9 +73,11 @@ Switch the artwork viewer between light, gray, and black backgrounds to inspect 
 
 ## 14. Collections
 
-Status: selected by the owner, included in the implementation plan.
+Status: implemented 2026-10-27 (Phase 8); focused tests and browser checks passed.
 
 Arrange related artworks into an ordered series or project. Removing a collection or a member does not delete the artwork.
+
+Collections carry a revision so stale order writes and old curated cursors are rejected instead of silently reordering someone else's view. Membership survives Trash and returns to its curated position on restore; permanent deletion is the only action that removes it. Archive version 4 includes the collections and their order.
 
 ## 16. Thumbnail framing
 

@@ -43,6 +43,7 @@ interface AchievementDetailModalProps {
   onDelete: (deletedId: string) => void;
   restoreRequest: RestoreRequest | null;
   onDismissRestore: () => void;
+  onCollectionChanged?: () => void;
 }
 
 export function AchievementDetailModal({
@@ -62,12 +63,17 @@ export function AchievementDetailModal({
   onDelete,
   restoreRequest,
   onDismissRestore,
+  onCollectionChanged,
 }: AchievementDetailModalProps) {
   const [displayUrl, setDisplayUrl] = useState<string | null>(null);
   const [imageLoading, setImageLoading] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [restoreResolved, setRestoreResolved] = useState(false);
+  const [collections, setCollections] = useState<Array<{ id: string; name: string }>>([]);
+  const [targetCollection, setTargetCollection] = useState('');
+  const [collectionMessage, setCollectionMessage] = useState<string | null>(null);
+  const [addingToCollection, setAddingToCollection] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
   // Edit mode state
@@ -139,6 +145,108 @@ export function AchievementDetailModal({
   useEffect(() => {
     setRestoreResolved(false);
   }, [achievement?.id, restoreRequest]);
+
+  const achievementId = achievement?.id ?? null;
+  useEffect(() => {
+    setCollectionMessage(null);
+    setTargetCollection('');
+    if (!achievementId) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch('/api/collections', {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        if (!response.ok) return;
+        const data = (await response.json()) as { collections: Array<{ id: string; name: string }> };
+        if (!cancelled) setCollections(data.collections);
+      } catch {
+        // The picker is optional; a failed list leaves it empty.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [achievementId]);
+
+  const handleAddToCollection = async () => {
+    if (!achievement || !targetCollection) {
+      setCollectionMessage('Choose a collection first.');
+      return;
+    }
+    setAddingToCollection(true);
+    setCollectionMessage(null);
+    try {
+      const detailResponse = await fetch(`/api/collections/${targetCollection}`, {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      });
+      if (!detailResponse.ok) throw new Error('Could not load that collection.');
+      const detail = (await detailResponse.json()) as {
+        id: string;
+        revision: number;
+        items: Array<{ achievementId: string }>;
+      };
+
+      const ids = detail.items.map((item) => item.achievementId);
+      if (ids.includes(achievement.id)) {
+        setCollectionMessage('This artwork is already in that collection.');
+        return;
+      }
+
+      const write = async (revision: number) =>
+        fetch(`/api/collections/${targetCollection}/items`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body: JSON.stringify({ revision, achievementIds: [...ids, achievement.id] }),
+        });
+
+      let response = await write(detail.revision);
+      if (response.status === 409) {
+        // Another tab changed the order; reload the revision and retry once.
+        const retryDetail = await fetch(`/api/collections/${targetCollection}`, {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        if (!retryDetail.ok) throw new Error('Could not load that collection.');
+        const fresh = (await retryDetail.json()) as {
+          revision: number;
+          items: Array<{ achievementId: string }>;
+        };
+        const freshIds = fresh.items.map((item) => item.achievementId);
+        if (freshIds.includes(achievement.id)) {
+          setCollectionMessage('This artwork is already in that collection.');
+          return;
+        }
+        response = await fetch(`/api/collections/${targetCollection}/items`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body: JSON.stringify({ revision: fresh.revision, achievementIds: [...freshIds, achievement.id] }),
+        });
+      }
+
+      if (!response.ok) {
+        const data = (await response.json()) as { error?: string };
+        throw new Error(data.error || 'Could not add this artwork to the collection.');
+      }
+
+      const chosen = collections.find((collection) => collection.id === targetCollection);
+      setCollectionMessage(`Added to "${chosen?.name ?? 'collection'}".`);
+      onCollectionChanged?.();
+    } catch (err) {
+      setCollectionMessage(
+        err instanceof Error ? err.message : 'Could not add this artwork to the collection.'
+      );
+    } finally {
+      setAddingToCollection(false);
+    }
+  };
 
   const detailModalRef = useRef<HTMLDivElement>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
@@ -613,6 +721,80 @@ export function AchievementDetailModal({
                 Not now
               </button>
             </div>
+          </div>
+        )}
+
+        {collections.length > 0 && (
+          <div
+            data-collection-picker
+            style={{
+              margin: '16px 24px 0',
+              padding: '12px 14px',
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'flex-end',
+              gap: 10,
+              backgroundColor: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              borderRadius: 8,
+            }}
+          >
+            <div style={{ flex: '1 1 220px' }}>
+              <label
+                htmlFor="detail-collection-select"
+                style={{ display: 'block', fontWeight: 600, fontSize: 12, color: '#475569', marginBottom: 4 }}
+              >
+                Add to collection
+              </label>
+              <select
+                id="detail-collection-select"
+                value={targetCollection}
+                onChange={(event) => setTargetCollection(event.target.value)}
+                disabled={addingToCollection}
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  minHeight: 44,
+                  padding: '8px 10px',
+                  borderRadius: 6,
+                  border: '1px solid #cbd5e1',
+                  fontSize: 14,
+                  backgroundColor: '#fff',
+                }}
+              >
+                <option value="">Choose a collection…</option>
+                {collections.map((collection) => (
+                  <option key={collection.id} value={collection.id}>
+                    {collection.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleAddToCollection()}
+              disabled={addingToCollection || !targetCollection}
+              style={{
+                minHeight: 44,
+                minWidth: 44,
+                padding: '9px 14px',
+                backgroundColor: '#fff',
+                color: '#1d4ed8',
+                border: '1px solid #bfdbfe',
+                borderRadius: 6,
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: addingToCollection || !targetCollection ? 'not-allowed' : 'pointer',
+                opacity: addingToCollection || !targetCollection ? 0.7 : 1,
+              }}
+            >
+              {addingToCollection ? 'Adding…' : 'Add to collection'}
+            </button>
+            {collectionMessage && (
+              <p role="status" aria-live="polite" style={{ flex: '1 1 100%', margin: 0, fontSize: 13, color: '#334155' }}>
+                {collectionMessage}
+              </p>
+            )}
           </div>
         )}
 

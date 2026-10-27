@@ -239,7 +239,7 @@ describe('Integration: reliable permanent deletion', () => {
         headers,
         body: JSON.stringify({ achievementId: id }),
       }),
-      { params: { id: replacementIntent } }
+      { params: Promise.resolve({ id: replacementIntent }) }
     );
     expect(replaced.status).toBe(200);
     failing.mockRestore();

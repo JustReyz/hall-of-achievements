@@ -2,6 +2,7 @@ import { and, desc, eq, isNotNull, isNull, lt, or } from 'drizzle-orm';
 import type { AppDatabase } from '../db';
 import { achievements, assets } from '../db/schema';
 import type { StorageAdapter } from '../storage/adapter';
+import { bumpCollectionsForAchievement } from './collections';
 
 export class TrashError extends Error {
   readonly code: string;
@@ -53,6 +54,8 @@ export async function moveToTrash(
     .returning({ id: achievements.id });
 
   if (trashed[0]) {
+    // Curated views must not mix visible and trashed members across a revision.
+    await bumpCollectionsForAchievement(db, id);
     return { id, trashed: true, alreadyTrashed: false };
   }
 
@@ -95,6 +98,7 @@ export async function restoreFromTrash(
     .returning({ id: achievements.id });
 
   if (restored[0]) {
+    await bumpCollectionsForAchievement(db, id);
     return { id, restored: true, alreadyRestored: false };
   }
 
@@ -162,6 +166,10 @@ export async function purgeDeletingAchievement(
       return 'pending';
     }
   }
+
+  // Memberships cascade with the achievement row, so invalidate the affected
+  // collections while those memberships still exist.
+  await bumpCollectionsForAchievement(db, id);
 
   // Delete database references only after the awaited deletion succeeds.
   await db.transaction(async (tx) => {

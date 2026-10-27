@@ -10,6 +10,8 @@ import { AddAchievementModal } from '@/components/gallery/AddAchievementModal';
 import { AchievementDetailModal } from '@/components/gallery/AchievementDetailModal';
 import { ArchiveHealthPanel } from '@/components/gallery/ArchiveHealthPanel';
 import { TrashPanel } from '@/components/gallery/TrashPanel';
+import { CollectionPanel } from '@/components/gallery/CollectionPanel';
+import type { CollectionSummary } from '@/components/gallery/types';
 import { ContactSheetExport } from '@/components/gallery/ContactSheetExport';
 import type { ViewerBackground } from '@/components/gallery/ArtworkViewer';
 import { NotificationPanel } from '@/components/notifications/NotificationPanel';
@@ -86,6 +88,9 @@ export default function HomePage() {
   const [contactSheetScope, setContactSheetScope] = useState(0);
   const [restoreRequest, setRestoreRequest] = useState<RestoreRequest | null>(null);
   const [archiveRevision, setArchiveRevision] = useState(0);
+  const [selectedCollection, setSelectedCollection] = useState<CollectionSummary | null>(null);
+  // Read at request time so a collection change can never race an in-flight page.
+  const collectionRef = useRef<CollectionSummary | null>(null);
 
   const loadedById = new Map(items.map((item) => [item.id, item]));
   const contactSheetItems = contactSheetSelection
@@ -265,8 +270,9 @@ export default function HomePage() {
       active: GalleryFilters,
       pageCursor: string | null = null
     ): Promise<GalleryRequestResult> => {
+      const collection = collectionRef.current;
       const appendKey = pageCursor
-        ? `${active.q}\u0000${active.from}\u0000${active.to}\u0000${active.tag}\u0000${pageCursor}`
+        ? `${active.q}\u0000${active.from}\u0000${active.to}\u0000${active.tag}\u0000${collection?.id ?? ''}\u0000${pageCursor}`
         : null;
 
       if (appendKey) {
@@ -292,12 +298,22 @@ export default function HomePage() {
           if (active.to) params.set('to', active.to);
           if (active.tag) params.set('tag', active.tag);
           if (pageCursor) params.set('cursor', pageCursor);
-          const response = await fetch(`/api/achievements?${params}`);
+          const endpoint = collection
+            ? `/api/collections/${collection.id}/items`
+            : '/api/achievements';
+          const response = await fetch(`${endpoint}?${params}`);
           if (generation !== requestGeneration.current) {
             return { ok: false, items: [], nextCursor: null, hasMore: false };
           }
           if (response.status === 401) {
             handleSessionExpired();
+            return { ok: false, items: [], nextCursor: null, hasMore: false };
+          }
+          if (response.status === 409 && collection) {
+            setGalleryError('This collection changed. Reloading its first page…');
+            setFailedCursor(null);
+            setGalleryLoading(false);
+            void fetchAchievements(active, null);
             return { ok: false, items: [], nextCursor: null, hasMore: false };
           }
           if (!response.ok) throw new Error('Failed to load artwork. Please retry.');
@@ -353,6 +369,8 @@ export default function HomePage() {
         if (active.q) params.set('q', active.q);
         if (active.from) params.set('from', active.from);
         if (active.to) params.set('to', active.to);
+        const collection = collectionRef.current;
+        if (collection) params.set('collectionId', collection.id);
         const query = params.toString();
         const response = await fetch(`/api/tags${query ? `?${query}` : ''}`);
         if (generation !== tagRequestGeneration.current) return;
@@ -601,6 +619,30 @@ export default function HomePage() {
     void fetchTags(filters);
     void fetchQuota();
   };
+
+  // Applying a collection replaces the gallery source. The cursor, contact-sheet
+  // selection, and viewer navigation belong to the previous scope and are cleared.
+  const applyCollection = useCallback(
+    (collection: CollectionSummary | null) => {
+      collectionRef.current = collection;
+      setSelectedCollection(collection);
+      invalidateNavigation();
+      resetContactSheetSelection();
+      closeDetail();
+      setGalleryError(null);
+      void fetchAchievements(filters, null);
+      void fetchTags(filters);
+    },
+    [invalidateNavigation, resetContactSheetSelection, closeDetail, fetchAchievements, fetchTags, filters]
+  );
+
+  // Reordering or re-membering a collection changes the curated page, so refresh
+  // the gallery in its current scope as well as the panels keyed on the revision.
+  const handleCollectionsChanged = useCallback(() => {
+    setArchiveRevision((revision) => revision + 1);
+    void fetchAchievements(filters, null);
+    void fetchTags(filters);
+  }, [fetchAchievements, fetchTags, filters]);
 
   // Trash actions change what the gallery and tags should show without changing
   // the active filters.
@@ -940,6 +982,14 @@ export default function HomePage() {
           onRetry={() => void fetchTags(filters)}
         />
 
+        <CollectionPanel
+          selectedCollectionId={selectedCollection?.id ?? null}
+          revision={archiveRevision}
+          onSelect={applyCollection}
+          onChanged={handleCollectionsChanged}
+          onSessionExpired={handleSessionExpired}
+        />
+
         <ArchiveHealthPanel
           filters={filters}
           revision={archiveRevision}
@@ -972,7 +1022,9 @@ export default function HomePage() {
               ? 'Loading artwork...'
               : galleryError
                 ? ''
-                : `${items.length} ${items.length === 1 ? 'artwork' : 'artworks'} loaded`}
+                : `${items.length} ${items.length === 1 ? 'artwork' : 'artworks'} loaded${
+                    selectedCollection ? ` in "${selectedCollection.name}"` : ''
+                  }`}
           </p>
 
           {!contactSheetMode && (
@@ -1096,6 +1148,7 @@ export default function HomePage() {
         onDelete={handleDeleteAchievement}
         restoreRequest={restoreRequest}
         onDismissRestore={() => setRestoreRequest(null)}
+        onCollectionChanged={() => setArchiveRevision((revision) => revision + 1)}
       />
     </div>
   );

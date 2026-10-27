@@ -152,14 +152,15 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
 
     expect(exportRes.achievementsCount).toBe(2);
     expect(exportRes.assetsCount).toBe(2);
-    expect(exportRes.filesCount).toBe(8); // 2 metadata + 6 binary assets
-    expect(exportRes.manifest.version).toBe(3);
+    expect(exportRes.filesCount).toBe(9); // 3 metadata + 6 binary assets
+    expect(exportRes.manifest.version).toBe(4);
 
     // Verify disk structure
     const manifestPath = path.join(exportDir, 'manifest.json');
     expect(fs.existsSync(manifestPath)).toBe(true);
     expect(fs.existsSync(path.join(exportDir, 'metadata', 'achievements.json'))).toBe(true);
     expect(fs.existsSync(path.join(exportDir, 'metadata', 'assets.json'))).toBe(true);
+    expect(fs.existsSync(path.join(exportDir, 'metadata', 'collections.json'))).toBe(true);
     expect(fs.existsSync(path.join(exportDir, 'assets', ...origKey1.split('/')))).toBe(true);
     expect(fs.existsSync(path.join(exportDir, 'assets', ...origKey2.split('/')))).toBe(true);
 
@@ -180,7 +181,7 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
 
     expect(restoreRes.achievementsRestored).toBe(2);
     expect(restoreRes.assetsRestored).toBe(2);
-    expect(restoreRes.filesRestored).toBe(8);
+    expect(restoreRes.filesRestored).toBe(9);
 
     // 5. Verify restored DB records
     const restoredAchievements = await db.select().from(achievements);

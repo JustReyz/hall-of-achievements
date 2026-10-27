@@ -32,6 +32,30 @@ export interface GalleryResponse {
   hasMore: boolean;
 }
 
+export interface CollectionSummary {
+  id: string;
+  name: string;
+  revision: number;
+  memberCount: number;
+  updatedAt: string;
+}
+
+export interface CollectionMember {
+  achievementId: string;
+  position: number;
+  title: string;
+  completionDate: string;
+  state: string;
+  trashedAt: string | null;
+}
+
+export interface CollectionDetail {
+  id: string;
+  name: string;
+  revision: number;
+  items: CollectionMember[];
+}
+
 export type ObjectHealthState = 'present' | 'missing' | 'unknown';
 
 export interface RestoreRequest {

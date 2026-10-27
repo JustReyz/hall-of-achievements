@@ -296,12 +296,12 @@ Both calls operate on an achievement already durably claimed as deleting. Metada
 
 **Create:** `src/lib/operations/collections.ts`, `src/lib/validation/collection.ts`, `src/app/api/collections/route.ts`, `src/app/api/collections/[id]/route.ts`, `src/app/api/collections/[id]/items/route.ts`, `src/components/gallery/CollectionPanel.tsx`, `tests/integration/collections.test.ts`.
 
-- [ ] Add collections with UUID, trimmed name of 1 through 120 characters, revision counter, and timestamps. Add collection_items with collectionId, achievementId, and integer position. Use foreign keys, unique membership, and unique position per collection.
-- [ ] Use cascade deletion from a collection to its membership only. Removing a collection or membership must never remove artwork. Retain membership when art enters Trash so restoring it recovers its position. Permanent purge removes that artwork's memberships.
-- [ ] Add authenticated collection CRUD and an Items endpoint. Limit the initial collection to 200 members and explain the limit in the editor. Accept at most 200 IDs in a membership/order write. Reject duplicate IDs, non-ready/trashed additions, missing artwork, and invalid revision values.
-- [ ] Provide labeled Add to collection, Remove from collection, Move up, and Move down controls. Use these native controls before considering drag behavior.
-- [ ] Treat each membership/order update as a complete ordered ID list with its expected revision. Lock the collection, compare revision, validate the list, replace positions transactionally, and increment revision. A stale revision returns HTTP 409 with no partial changes.
-- [ ] Collection GET for the editor returns the revision and complete membership identifiers, including labeled entries currently in Trash. Reorder requests must preserve those entries unless the owner explicitly removes them. Existing trashed members may remain in a submitted order; adding a newly trashed member is rejected. The normal collection gallery still hides them.
+- [x] Add collections with UUID, trimmed name of 1 through 120 characters, revision counter, and timestamps. Add collection_items with collectionId, achievementId, and integer position. Use foreign keys, unique membership, and unique position per collection.
+- [x] Use cascade deletion from a collection to its membership only. Removing a collection or membership must never remove artwork. Retain membership when art enters Trash so restoring it recovers its position. Permanent purge removes that artwork's memberships.
+- [x] Add authenticated collection CRUD and an Items endpoint. Limit the initial collection to 200 members and explain the limit in the editor. Accept at most 200 IDs in a membership/order write. Reject duplicate IDs, non-ready/trashed additions, missing artwork, and invalid revision values.
+- [x] Provide labeled Add to collection, Remove from collection, Move up, and Move down controls. Use these native controls before considering drag behavior.
+- [x] Treat each membership/order update as a complete ordered ID list with its expected revision. Lock the collection, compare revision, validate the list, replace positions transactionally, and increment revision. A stale revision returns HTTP 409 with no partial changes.
+- [x] Collection GET for the editor returns the revision and complete membership identifiers, including labeled entries currently in Trash. Reorder requests must preserve those entries unless the owner explicitly removes them. Existing trashed members may remain in a submitted order; adding a newly trashed member is rejected. The normal collection gallery still hides them.
 
 ```ts
 type CollectionOrderWrite = { revision: number; achievementIds: string[] };
@@ -313,11 +313,11 @@ type CollectionCursor = {
 };
 ```
 
-- [ ] Paginate curated views by position and ID using their own validated cursor. Include collection ID and revision in that cursor. Reject a cursor from another collection or an old revision. Do not feed a date/UUID gallery cursor into this route.
-- [ ] On HTTP 409, reload the collection's first page and explain that its contents changed. Search, exact tag, and date filters narrow collection members without changing their curated order. Global gallery ordering remains date/ID descending.
-- [ ] Extend the existing page request owner to choose gallery or collection-items endpoint. Applying a new collection clears its cursor, selection, and viewer navigation generation. Keep `GalleryResponse` pagination fields compatible.
-- [ ] Bump affected collection revisions on trash, restore, or permanent purge so in-flight views cannot mix membership visibility. Lock affected collections in consistent UUID order to prevent deadlocks.
-- [ ] Export collections and membership metadata with archive version 4. Restore validates all referenced achievement IDs, unique memberships/positions, and revisions before any mutation. Accept prior versions with no collections. Preserve session revocation and integrity verification.
+- [x] Paginate curated views by position and ID using their own validated cursor. Include collection ID and revision in that cursor. Reject a cursor from another collection or an old revision. Do not feed a date/UUID gallery cursor into this route.
+- [x] On HTTP 409, reload the collection's first page and explain that its contents changed. Search, exact tag, and date filters narrow collection members without changing their curated order. Global gallery ordering remains date/ID descending.
+- [x] Extend the existing page request owner to choose gallery or collection-items endpoint. Applying a new collection clears its cursor, selection, and viewer navigation generation. Keep `GalleryResponse` pagination fields compatible.
+- [x] Bump affected collection revisions on trash, restore, or permanent purge so in-flight views cannot mix membership visibility. Lock affected collections in consistent UUID order to prevent deadlocks.
+- [x] Export collections and membership metadata with archive version 4. Restore validates all referenced achievement IDs, unique memberships/positions, and revisions before any mutation. Accept prior versions with no collections. Preserve session revocation and integrity verification.
 
 **Proof:** Create/rename/delete a collection, add/remove/reorder members, duplicate and invalid membership rejection, concurrent writes, stale/wrong cursor rejection, filtered pagination, and preserved artwork after collection deletion. Trash and restore return an item to its original position. Round-trip the full archive including trashed memberships and framing.
 
@@ -478,6 +478,22 @@ Deployments and production migration execution are separate work. This plan does
 - Changed behavior for callers: `DELETE /api/achievements/[id]` now trashes instead of deleting. Existing crud and adversarial-gallery tests were rewritten to trash, assert kept bytes, then purge explicitly, rather than leaving the old permanent-delete expectations ambiguous.
 - Not verified here: a real storage provider refusing deletion, and a production or copied PostgreSQL migration run. Both cleanup paths were exercised with the memory adapter, PGlite, and injected failures. No production backup was taken or restored.
 - Skipped/deferred: collections join the visibility predicate in Phase 8. No expiry timer, cron, or automatic purge was added.
+
+### Phase 8 (2026-10-27)
+
+- `npm run typecheck`: passed (`tsc --noEmit`, no diagnostics).
+- `npx eslint` over the changed source and test files: no findings.
+- New Phase 8 suite: `npx vitest run tests/integration/collections.test.ts` passed 7/7 tests, 11.75s.
+- Archive and migration suites: `npx vitest run tests/integration/export-restore.test.ts tests/integration/thumbnail-framing.test.ts tests/integration/archive-migrations.test.ts tests/integration/collections.test.ts` passed 36/36 tests in 4 files, 65.06s.
+- Final regression set: `npx vitest run tests/integration/collections.test.ts tests/integration/trash.test.ts tests/integration/purge-recovery.test.ts tests/integration/achievements-crud.test.ts tests/integration/gallery-pagination.test.ts tests/integration/tag-browser.test.ts tests/integration/archive-health.test.ts tests/integration/archive-migrations.test.ts tests/integration/batch-upload.test.ts tests/integration/export-restore.test.ts tests/integration/thumbnail-framing.test.ts tests/integration/gallery-empty-state.test.ts` passed 105/105 tests in 12 files, 156.09s.
+- Browser harness: `node .agent-runtime/phase8-browser-check.mjs` passed 14/14 checks at 1280×900 and 390×844, with 0 page exceptions. Evidence (local, Git-ignored): `.agent-runtime/evidence/phase8-browser-report.json`, `phase8-collections-desktop.png`, `phase8-collections-mobile.png`.
+- Browser environment: Next dev server on `localhost:3000` restarted for the collections schema, Chrome DevTools on port 9222, synthetic in-memory PGlite archive reseeded to 35 records. The harness creates two artworks through the authenticated API and drives the panel and detail dialog; JavaScript confirms and prompts are auto-accepted.
+- Verified in the browser: the panel creates a collection with zero members and 44px controls; both artworks join through the detail dialog's labelled picker and land in add order; browsing the collection shows only its members and labels the gallery scope; the editor lists ordered members with Move up, Move down, and Remove from collection; Move up writes the complete new order and the scoped gallery follows it; removing a member shrinks the collection while the artwork stays in the 37-record archive; deleting the collection removes only the grouping and the gallery returns to the full archive; the panel fits a 390px viewport without horizontal overflow.
+- The browser pass caught a real gap: a successful reorder updated the editor and revision but not the scoped gallery, so the visible order lagged the stored order. The page now refreshes the gallery and tag facet when a collection mutation succeeds. Two later harness failures were test timing, not product behavior, and were fixed by waiting for the scoped and unscoped card lists.
+- Curated cursors carry collection ID, revision, position, and artwork ID. A cursor from an old revision returns 409 `CURSOR_STALE` and one from another collection returns 400 `CURSOR_INVALID`; the page reloads the first page and explains. Date/UUID gallery cursors are never accepted here.
+- Order writes replace the complete list in one transaction under a collection row lock after re-reading the revision, so a stale write changes nothing. Membership additions are re-checked against ready, non-trashed artwork; existing trashed members may stay in a submitted order. Trash, restore, and permanent purge bump every affected collection revision, locking the affected collections in UUID order.
+- Archive version 4 adds `metadata/collections.json`. Restore validates collection IDs, names, revisions, membership uniqueness, positions, and every referenced artwork before any mutation, then replaces membership wholesale inside the restore transaction. Versions 1 through 3 restore with no collections. Session revocation and checksum verification are unchanged.
+- Not verified here: multi-process concurrent order writes on a pooled PostgreSQL deployment. The row lock is the same code path proven under PGlite, which serializes in-process. No production backup or migration was executed.
 
 ## Completion condition
 

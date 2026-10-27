@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -215,7 +215,7 @@ describe('Integration: recoverable Trash', () => {
     expect(storage.hasObject(asset!.displayKey)).toBe(false);
   });
 
-  it('round-trips Trash state through archive version 3', async () => {
+  it('round-trips Trash state through the current archive version', async () => {
     const { headers } = await createAuthenticatedHeaders();
     const kept = await createArtwork(headers, 'Kept Artwork');
     const trashed = await createArtwork(headers, 'Trashed Artwork');
@@ -223,7 +223,7 @@ describe('Integration: recoverable Trash', () => {
 
     const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trash-roundtrip-'));
     const exported = await exportArchive({ outputDir, force: true });
-    expect(exported.manifest.version).toBe(3);
+    expect(exported.manifest.version).toBe(4);
 
     await resetDatabase();
     (getStorage() as MemoryStorageAdapter).clear();
