@@ -1,11 +1,26 @@
 import { type NextRequest } from 'next/server';
 import { eq, and, desc } from 'drizzle-orm';
-import { authenticateApiRequest, jsonError, jsonResponse } from '@/lib/auth/api-guard';
+import {
+  authenticateApiRequest,
+  jsonError,
+  jsonResponse,
+  PRIVATE_CACHE_HEADERS,
+} from '@/lib/auth/api-guard';
 import { getDb } from '@/lib/db';
 import { achievements, assets } from '@/lib/db/schema';
 import { getStorage } from '@/lib/storage';
+import { StorageNotFoundError } from '@/lib/storage/adapter';
 
 const SIGNED_URL_LIFETIME_SECONDS = 60; // Strictly <= 60 seconds per PRD AC5
+const MAX_INLINE_DISPLAY_BYTES = 4 * 1024 * 1024;
+
+function isWebp(data: Buffer): boolean {
+  return (
+    data.length >= 12 &&
+    data.toString('ascii', 0, 4) === 'RIFF' &&
+    data.toString('ascii', 8, 12) === 'WEBP'
+  );
+}
 
 function sanitizeFilename(title: string, mimeType: string): string {
   const ext = mimeType === 'image/jpeg' ? 'jpg' : mimeType === 'image/png' ? 'png' : 'webp';
@@ -29,7 +44,31 @@ export async function GET(
 
   const url = new URL(request.url);
   const requestedType = url.searchParams.get('type');
+  const delivery = url.searchParams.get('delivery');
+  const isInlineDelivery = delivery === 'inline';
   const isDownload = url.searchParams.get('download') === 'true';
+
+  if (isInlineDelivery) {
+    if (requestedType !== 'display') {
+      return jsonError(
+        'Inline delivery is available only for display derivatives',
+        400,
+        'INVALID_INLINE_ASSET_REQUEST'
+      );
+    }
+
+    if (
+      url.searchParams.has('url') ||
+      url.searchParams.has('key') ||
+      url.searchParams.has('assetKey')
+    ) {
+      return jsonError(
+        'Inline delivery uses the server-owned display key only',
+        400,
+        'INVALID_INLINE_ASSET_REQUEST'
+      );
+    }
+  }
 
   try {
     const db = await getDb();
@@ -61,6 +100,41 @@ export async function GET(
     const asset = assetRows[0];
     if (!asset) {
       return jsonError('Asset not found for achievement', 404, 'ASSET_NOT_FOUND');
+    }
+
+    if (isInlineDelivery) {
+      try {
+        const display = await storage.getObject(asset.displayKey);
+
+        if (display.data.length > MAX_INLINE_DISPLAY_BYTES) {
+          return jsonError(
+            'Display derivative exceeds the 4 MiB inline limit',
+            413,
+            'DISPLAY_TOO_LARGE'
+          );
+        }
+
+        if (!isWebp(display.data)) {
+          return jsonError(
+            'Display derivative is not a valid WebP image',
+            502,
+            'INVALID_DISPLAY_DERIVATIVE'
+          );
+        }
+
+        const headers = new Headers(PRIVATE_CACHE_HEADERS);
+        headers.set('Content-Type', 'image/webp');
+        headers.set('Content-Length', String(display.data.length));
+        headers.set('Content-Disposition', 'inline');
+        headers.set('X-Content-Type-Options', 'nosniff');
+
+        return new Response(new Uint8Array(display.data), { status: 200, headers });
+      } catch (err) {
+        if (err instanceof StorageNotFoundError) {
+          return jsonError('Display derivative is missing', 404, 'DISPLAY_NOT_FOUND');
+        }
+        throw err;
+      }
     }
 
     const downloadFilename = sanitizeFilename(achievement.title, asset.mimeType);

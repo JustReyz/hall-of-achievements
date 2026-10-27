@@ -2,6 +2,7 @@
 
 import { AchievementItem } from './types';
 import { GalleryCard } from './GalleryCard';
+import { CONTACT_SHEET_MAX_ITEMS } from '@/lib/image/contact-sheet';
 
 interface GalleryGridProps {
   items: AchievementItem[];
@@ -11,6 +12,9 @@ interface GalleryGridProps {
   onLoadMore: () => void;
   onSelectAchievement: (item: AchievementItem) => void;
   onOpenAddModal?: () => void;
+  selectionMode?: boolean;
+  selectedIds?: string[];
+  onToggleSelection?: (item: AchievementItem) => void;
 }
 
 export function GalleryGrid({
@@ -21,6 +25,9 @@ export function GalleryGrid({
   onLoadMore,
   onSelectAchievement,
   onOpenAddModal,
+  selectionMode = false,
+  selectedIds = [],
+  onToggleSelection,
 }: GalleryGridProps) {
   // Skeleton placeholders
   const renderSkeletons = (count: number) => {
@@ -129,6 +136,14 @@ export function GalleryGrid({
             key={item.id}
             achievement={item}
             onClick={onSelectAchievement}
+            selectable={selectionMode}
+            selected={selectedIds.includes(item.id)}
+            selectionDisabled={
+              selectionMode &&
+              selectedIds.length >= CONTACT_SHEET_MAX_ITEMS &&
+              !selectedIds.includes(item.id)
+            }
+            onToggleSelection={onToggleSelection}
           />
         ))}
 

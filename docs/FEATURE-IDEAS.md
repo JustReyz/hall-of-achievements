@@ -27,9 +27,11 @@ The implemented browser uses exact tag membership rather than substring search, 
 
 ## 7. Contact sheet export
 
-Status: selected by the owner, included in the implementation plan.
+Status: implemented 2026-10-27 (Phase 4); focused tests and browser checks passed.
 
 Select artworks and download a grid of them as one image. Use the result as a visual record of a period or a group of finished pieces.
+
+Selection is capped at 24 loaded artworks. The export requests authenticated display derivatives in selection order and downloads a white PNG with plain captions; it never routes originals through the browser.
 
 ## 8. Process gallery
 

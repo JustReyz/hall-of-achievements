@@ -8,9 +8,11 @@ import { TagBrowser } from '@/components/gallery/TagBrowser';
 import { GalleryGrid } from '@/components/gallery/GalleryGrid';
 import { AddAchievementModal } from '@/components/gallery/AddAchievementModal';
 import { AchievementDetailModal } from '@/components/gallery/AchievementDetailModal';
+import { ContactSheetExport } from '@/components/gallery/ContactSheetExport';
 import type { ViewerBackground } from '@/components/gallery/ArtworkViewer';
 import { NotificationPanel } from '@/components/notifications/NotificationPanel';
 import { validateDateRange } from '@/lib/validation/achievement';
+import { CONTACT_SHEET_MAX_ITEMS } from '@/lib/image/contact-sheet';
 
 interface SessionStatus {
   authenticated: boolean;
@@ -77,6 +79,14 @@ export default function HomePage() {
   const [selectedSnapshot, setSelectedSnapshot] = useState<AchievementItem | null>(null);
   const [isViewerOpen, setIsViewerOpen] = useState(false);
   const [viewerBackground, setViewerBackground] = useState<ViewerBackground>('black');
+  const [contactSheetMode, setContactSheetMode] = useState(false);
+  const [contactSheetSelection, setContactSheetSelection] = useState<string[]>([]);
+  const [contactSheetScope, setContactSheetScope] = useState(0);
+
+  const loadedById = new Map(items.map((item) => [item.id, item]));
+  const contactSheetItems = contactSheetSelection
+    .map((id) => loadedById.get(id))
+    .filter((item): item is AchievementItem => Boolean(item));
 
   const selectedAchievement =
     (selectedId ? items.find((item) => item.id === selectedId) : undefined) ??
@@ -106,6 +116,33 @@ export default function HomePage() {
     setIsViewerOpen(false);
   }, [invalidateNavigation]);
 
+  const resetContactSheetSelection = useCallback(() => {
+    setContactSheetSelection([]);
+    setContactSheetScope((generation) => generation + 1);
+  }, []);
+
+  const toggleContactSheetSelection = useCallback((item: AchievementItem) => {
+    setContactSheetSelection((previous) => {
+      if (previous.includes(item.id)) {
+        return previous.filter((id) => id !== item.id);
+      }
+      if (previous.length >= CONTACT_SHEET_MAX_ITEMS) return previous;
+      return [...previous, item.id];
+    });
+  }, []);
+
+  const selectLoadedForContactSheet = useCallback(() => {
+    setContactSheetSelection((previous) => {
+      if (previous.length >= CONTACT_SHEET_MAX_ITEMS) return previous;
+      const next = [...previous];
+      for (const item of items) {
+        if (next.length >= CONTACT_SHEET_MAX_ITEMS) break;
+        if (!next.includes(item.id)) next.push(item.id);
+      }
+      return next;
+    });
+  }, [items]);
+
   const handleSessionExpired = useCallback(() => {
     requestGeneration.current++;
     tagRequestGeneration.current++;
@@ -120,8 +157,10 @@ export default function HomePage() {
     setGalleryError(null);
     setFailedCursor(null);
     setTagError(null);
+    setContactSheetMode(false);
+    resetContactSheetSelection();
     closeDetail();
-  }, [closeDetail]);
+  }, [closeDetail, resetContactSheetSelection]);
 
   const selectForDetail = useCallback(
     (item: AchievementItem) => {
@@ -324,11 +363,12 @@ export default function HomePage() {
         return;
       }
       closeDetail();
+      resetContactSheetSelection();
       setFilters(next);
       void fetchAchievements(next);
       void fetchTags(next);
     },
-    [closeDetail, fetchAchievements, fetchTags, filters]
+    [closeDetail, fetchAchievements, fetchTags, filters, resetContactSheetSelection]
   );
 
   // Handle Search input from SearchBar
@@ -344,11 +384,12 @@ export default function HomePage() {
     (tag: string) => {
       if (tag === filters.tag) return;
       closeDetail();
+      resetContactSheetSelection();
       const next = { ...filters, tag };
       setFilters(next);
       void fetchAchievements(next);
     },
-    [closeDetail, fetchAchievements, filters]
+    [closeDetail, fetchAchievements, filters, resetContactSheetSelection]
   );
 
   const handleApplyDates = (event: FormEvent) => {
@@ -446,6 +487,8 @@ export default function HomePage() {
           setDraftFrom('');
           setDraftTo('');
           setDateError(null);
+          setContactSheetMode(false);
+          resetContactSheetSelection();
           void fetchAchievements(EMPTY_FILTERS);
           void fetchTags(EMPTY_FILTERS);
           void fetchQuota();
@@ -481,6 +524,7 @@ export default function HomePage() {
 
   // Callback when a new achievement is added
   const handleAddSuccess = () => {
+    resetContactSheetSelection();
     void fetchAchievements(filters);
     void fetchTags(filters);
     void fetchQuota();
@@ -488,6 +532,7 @@ export default function HomePage() {
 
   // Callback when an achievement is updated
   const handleUpdateAchievement = (updated: AchievementItem) => {
+    resetContactSheetSelection();
     if (!matchesGalleryFilters(updated, filters)) {
       closeDetail();
     } else {
@@ -499,6 +544,7 @@ export default function HomePage() {
 
   // Callback when an achievement is deleted
   const handleDeleteAchievement = () => {
+    resetContactSheetSelection();
     closeDetail();
     void fetchAchievements(filters);
     void fetchTags(filters);
@@ -832,13 +878,70 @@ export default function HomePage() {
           onRetry={() => void fetchTags(filters)}
         />
 
-        <p role="status" aria-live="polite" style={{ margin: '0 0 20px 0', fontSize: '14px', color: '#64748b' }}>
-          {galleryLoading
-            ? 'Loading artwork...'
-            : galleryError
-              ? ''
-              : `${items.length} ${items.length === 1 ? 'artwork' : 'artworks'} loaded`}
-        </p>
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            margin: '0 0 20px 0',
+          }}
+        >
+          <p
+            role="status"
+            aria-live="polite"
+            style={{ margin: 0, fontSize: '14px', color: '#64748b' }}
+          >
+            {galleryLoading
+              ? 'Loading artwork...'
+              : galleryError
+                ? ''
+                : `${items.length} ${items.length === 1 ? 'artwork' : 'artworks'} loaded`}
+          </p>
+
+          {!contactSheetMode && (
+            <button
+              type="button"
+              onClick={() => {
+                setContactSheetSelection([]);
+                setContactSheetScope((generation) => generation + 1);
+                setContactSheetMode(true);
+              }}
+              disabled={items.length === 0}
+              style={{
+                minHeight: 44,
+                minWidth: 44,
+                padding: '9px 16px',
+                backgroundColor: '#fff',
+                color: '#1e293b',
+                border: '1px solid #cbd5e1',
+                borderRadius: 6,
+                fontWeight: 600,
+                fontSize: 14,
+                cursor: items.length === 0 ? 'not-allowed' : 'pointer',
+                opacity: items.length === 0 ? 0.6 : 1,
+              }}
+            >
+              Select for contact sheet
+            </button>
+          )}
+        </div>
+
+        {contactSheetMode && (
+          <ContactSheetExport
+            selectedItems={contactSheetItems}
+            loadedCount={items.length}
+            scopeKey={String(contactSheetScope)}
+            onSelectLoaded={selectLoadedForContactSheet}
+            onClear={resetContactSheetSelection}
+            onExit={() => {
+              resetContactSheetSelection();
+              setContactSheetMode(false);
+            }}
+            onSessionExpired={handleSessionExpired}
+          />
+        )}
 
         {galleryError && (
           <div
@@ -886,6 +989,9 @@ export default function HomePage() {
             onLoadMore={() => void handleLoadMore()}
             onSelectAchievement={selectForDetail}
             onOpenAddModal={() => setIsAddModalOpen(true)}
+            selectionMode={contactSheetMode}
+            selectedIds={contactSheetSelection}
+            onToggleSelection={toggleContactSheetSelection}
           />
         )}
       </main>

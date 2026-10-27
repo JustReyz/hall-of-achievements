@@ -164,12 +164,12 @@ objectPosition: `${achievement.thumbnailPositionX * 100}% ${achievement.thumbnai
 
 **Create:** `src/components/gallery/ContactSheetExport.tsx`, `src/lib/image/contact-sheet.ts`, `tests/unit/contact-sheet.test.ts`, `tests/integration/display-asset-bytes.test.ts`.
 
-- [ ] Add an explicit selection mode with native checkboxes outside the card's open-artwork button. Do not nest interactive controls. Keep selection as ordered achievement IDs in page memory and cap it at 24.
-- [ ] Preserve selection when appending a page. Clear it when filters, collection, session, or archive contents change. Explain that selecting all means loaded artworks, never unseen pages.
-- [ ] Extend the existing asset route with `type=display&delivery=inline`. This authenticated mode loads the server-owned sanitized display key and returns image bytes with `Content-Type: image/webp`, private no-store headers, and `X-Content-Type-Options: nosniff`. Reject inline original requests and client-supplied URLs or keys.
-- [ ] Enforce a 4 MiB display-response bound. Refuse an oversized or invalid derivative with a visible export error rather than routing an original through the function. This stays below Vercel's documented 4.5 MB function payload limit.
-- [ ] Use that same-origin bytes mode for canvas input so canvas export does not depend on storage-provider CORS. Existing signed-link browsing remains unchanged.
-- [ ] Implement `getContactSheetLayout(count)` in `contact-sheet.ts`, accepting 1 through 24. Use up to four columns, 512-by-416 cells, 16-pixel gaps, and 24-pixel outer margins. Reserve 384 pixels for the image and 32 for a plain-text caption. Reject a canvas edge above 4096 pixels.
+- [x] Add an explicit selection mode with native checkboxes outside the card's open-artwork button. Do not nest interactive controls. Keep selection as ordered achievement IDs in page memory and cap it at 24.
+- [x] Preserve selection when appending a page. Clear it when filters, collection, session, or archive contents change. Explain that selecting all means loaded artworks, never unseen pages. (Collection scope arrives in Phase 8.)
+- [x] Extend the existing asset route with `type=display&delivery=inline`. This authenticated mode loads the server-owned sanitized display key and returns image bytes with `Content-Type: image/webp`, private no-store headers, and `X-Content-Type-Options: nosniff`. Reject inline original requests and client-supplied URLs or keys.
+- [x] Enforce a 4 MiB display-response bound. Refuse an oversized or invalid derivative with a visible export error rather than routing an original through the function. This stays below Vercel's documented 4.5 MB function payload limit.
+- [x] Use that same-origin bytes mode for canvas input so canvas export does not depend on storage-provider CORS. Existing signed-link browsing remains unchanged.
+- [x] Implement `getContactSheetLayout(count)` in `contact-sheet.ts`, accepting 1 through 24. Use up to four columns, 512-by-416 cells, 16-pixel gaps, and 24-pixel outer margins. Reserve 384 pixels for the image and 32 for a plain-text caption. Reject a canvas edge above 4096 pixels.
 
 ```ts
 const columns = Math.min(4, count);
@@ -181,8 +181,8 @@ return {
 };
 ```
 
-- [ ] Fill the canvas white. Draw complete display images with contain sizing, in selection order, without card framing. Truncate long titles to fit with a visible ellipsis using canvas text measurement. Download `artwork-contact-sheet.png` through `canvas.toBlob`.
-- [ ] Fetch and decode one image at a time. Release each bitmap and temporary URL. Support Cancel, abort on logout, and abandon stale work on scope changes. On any missing or failed image, name the affected artwork and stop. Do not silently export an incomplete sheet.
+- [x] Fill the canvas white. Draw complete display images with contain sizing, in selection order, without card framing. Truncate long titles to fit with a visible ellipsis using canvas text measurement. Download `artwork-contact-sheet.png` through `canvas.toBlob`.
+- [x] Fetch and decode one image at a time. Release each bitmap and temporary URL. Support Cancel, abort on logout, and abandon stale work on scope changes. On any missing or failed image, name the affected artwork and stop. Do not silently export an incomplete sheet.
 
 **Proof:** Unit-test layout at 1, 4, and 24 selections and rejection at 0 and 25. Browser-test a real downloaded PNG, its dimensions, transparency against white, long titles, selection order, failure, cancellation, and no original downloads. The 24-image sheet must be 2144 by 2624 pixels.
 
@@ -420,6 +420,17 @@ Deployments and production migration execution are separate work. This plan does
 - Verified in the browser: an existing card defaults to `50% 50%`; the full display image remains `object-fit: contain` with no framing style; keyboard arrows change both axes; Center resets both to 50%; the 4:3 preview follows the 25%/75% draft; an intercepted failed save preserves that draft and keeps the editor open; retry saves and the gallery card applies `25% 75%`; a hard reload preserves both values; mobile framing controls have no horizontal overflow with a 300px preview and 44px sliders and Center control; 148 derivative asset requests and 0 `type=original` requests.
 - The seeded thumbnails are flat-color synthetic images, so browser framing evidence reads computed `object-position` and persistence rather than a visually distinguishable crop; the storage-level checksum and derivative-byte assertions in `thumbnail-framing.test.ts` cover unchanged originals and derivatives.
 - Skipped/deferred: applying the upgrade to a real production or copied PostgreSQL database remains a deployment step; this phase proved the same SQL against PGlite and the pooled `db:migrate` path. Trashed-record exclusion remains for Phase 7.
+
+### Phase 4 (2026-10-27)
+
+- `npm run typecheck`: passed (`tsc --noEmit`, no diagnostics).
+- `npx eslint` over the changed source and test files: no findings.
+- Focused suites: `npx vitest run tests/unit/contact-sheet.test.ts tests/integration/display-asset-bytes.test.ts tests/integration/gallery-pagination.test.ts tests/integration/gallery-empty-state.test.ts tests/integration/achievements-crud.test.ts tests/integration/adversarial-m2-gallery.test.ts tests/integration/thumbnail-framing.test.ts tests/integration/accessibility-performance.test.ts` passed 69/69 tests in 8 files, 117.29s.
+- Browser harness: `node .agent-runtime/phase4-browser-check.mjs` passed 37/37 checks at 1280×900 desktop and 390×844 mobile. Evidence: `.agent-runtime/evidence/phase4-browser-report.json`, `phase4-selection-desktop.png`, `phase4-selection-mobile.png`, `phase4-export-error.png`, `phase4-export-canceled.png`, and downloaded sheets `phase4-sheet-three.png` (1616×464), `phase4-sheet-24.png` (2144×2624), `phase4-sheet-order-colors.png` (1616×464), `phase4-sheet-single.png` (560×464), `phase4-sheet-mobile-2.png` (1088×464).
+- Browser environment: Next dev server on `localhost:3000`, Chrome DevTools on port 9222, Chrome 156 headless, synthetic in-memory PGlite database and `MemoryStorageAdapter`, 35 seeded records. Three temporary colored fixtures were created through the authenticated API and removed at the end, restoring 35 records and centered `After` framing.
+- Verified in the browser: 24 native 44px checkboxes sit outside the open-artwork `article`; ordered selection survives a 24→35 page append; Select loaded caps at 24, disables the remaining 11, and never adds unseen pages; a filter change clears the selection; the three-image sheet is 1616×464 with captions `["After","Tie 01","Before"]`; the 24-image sheet is 2144×2624 with captions matching the visible gallery order; every downloaded PNG is opaque (minimum alpha 255) with white margins; a reverse-order colored selection renders green, yellow, red at the cell centers; contain sizing leaves white inside each colored cell; a long caption ends in a visible ellipsis; a simulated 413 names the affected artwork and downloads nothing; a filter change, Cancel, and logout each abort in-flight work with no download; a post-cancel single-image export downloads 560×464; edit and permanent delete clear selection; mobile selection fits 390px without horizontal overflow; 239 asset requests included 38 same-origin inline display requests and 0 `type=original` requests; no uncaught page exceptions.
+- The harness captures gallery card titles rather than assuming numeric `Tie` order, because same-date records are ordered by UUID.
+- Skipped/deferred: collection-scope selection clearing belongs to Phase 8 because collections do not exist yet. Download behavior was exercised in Chrome 156 headless only; PNG dimensions, opacity, and pixels were verified with `sharp`. No production probes.
 
 ## Completion condition
 
