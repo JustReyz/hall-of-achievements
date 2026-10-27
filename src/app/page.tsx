@@ -6,6 +6,7 @@ import { SearchBar } from '@/components/gallery/SearchBar';
 import { GalleryGrid } from '@/components/gallery/GalleryGrid';
 import { AddAchievementModal } from '@/components/gallery/AddAchievementModal';
 import { AchievementDetailModal } from '@/components/gallery/AchievementDetailModal';
+import type { ViewerBackground } from '@/components/gallery/ArtworkViewer';
 import { NotificationPanel } from '@/components/notifications/NotificationPanel';
 import { validateDateRange } from '@/lib/validation/achievement';
 
@@ -18,6 +19,27 @@ interface SessionStatus {
 
 type GalleryFilters = { q: string; from: string; to: string };
 const EMPTY_FILTERS: GalleryFilters = { q: '', from: '', to: '' };
+
+interface GalleryRequestResult {
+  ok: boolean;
+  items: AchievementItem[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+function matchesGalleryFilters(item: AchievementItem, filters: GalleryFilters): boolean {
+  if (filters.from && item.completionDate < filters.from) return false;
+  if (filters.to && item.completionDate > filters.to) return false;
+
+  const query = filters.q.trim().toLowerCase();
+  if (!query) return true;
+
+  return (
+    item.title.toLowerCase().includes(query) ||
+    (item.notes ?? '').toLowerCase().includes(query) ||
+    JSON.stringify(item.tags).toLowerCase().includes(query)
+  );
+}
 
 export default function HomePage() {
   const [session, setSession] = useState<SessionStatus | null>(null);
@@ -37,12 +59,65 @@ export default function HomePage() {
   const [draftTo, setDraftTo] = useState('');
   const [dateError, setDateError] = useState<string | null>(null);
   const requestGeneration = useRef(0);
-  const requestBusy = useRef(false);
+  const appendRequests = useRef(new Map<string, Promise<GalleryRequestResult>>());
+  const navigationGeneration = useRef(0);
+  const navigationRequestId = useRef(0);
+  const [navigationPending, setNavigationPending] = useState(false);
   const [quota, setQuota] = useState<StorageQuotaInfo | null>(null);
 
   // Modal state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [selectedAchievement, setSelectedAchievement] = useState<AchievementItem | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedSnapshot, setSelectedSnapshot] = useState<AchievementItem | null>(null);
+  const [isViewerOpen, setIsViewerOpen] = useState(false);
+  const [viewerBackground, setViewerBackground] = useState<ViewerBackground>('black');
+
+  const selectedAchievement =
+    (selectedId ? items.find((item) => item.id === selectedId) : undefined) ??
+    (selectedSnapshot && selectedSnapshot.id === selectedId ? selectedSnapshot : null);
+  const selectedIndex = selectedAchievement
+    ? items.findIndex((item) => item.id === selectedAchievement.id)
+    : -1;
+  const hasPreviousArtwork = selectedIndex > 0;
+  const hasNextArtwork =
+    selectedIndex >= 0 && (selectedIndex < items.length - 1 || hasMore);
+
+  const invalidateNavigation = useCallback(() => {
+    navigationGeneration.current++;
+    navigationRequestId.current++;
+    setNavigationPending(false);
+  }, []);
+
+  const closeDetail = useCallback(() => {
+    invalidateNavigation();
+    setSelectedId(null);
+    setSelectedSnapshot(null);
+    setIsViewerOpen(false);
+  }, [invalidateNavigation]);
+
+  const closeViewer = useCallback(() => {
+    invalidateNavigation();
+    setIsViewerOpen(false);
+  }, [invalidateNavigation]);
+
+  const selectForDetail = useCallback(
+    (item: AchievementItem) => {
+      invalidateNavigation();
+      setSelectedId(item.id);
+      setSelectedSnapshot(item);
+      setIsViewerOpen(false);
+    },
+    [invalidateNavigation]
+  );
+
+  const selectForViewer = useCallback(
+    (item: AchievementItem) => {
+      invalidateNavigation();
+      setSelectedId(item.id);
+      setSelectedSnapshot(item);
+    },
+    [invalidateNavigation]
+  );
 
   // 1. Session verification
   const checkSession = useCallback(async () => {
@@ -77,10 +152,20 @@ export default function HomePage() {
 
   // 3. Fetch Achievements (first page or append)
   const fetchAchievements = useCallback(
-    async (active: GalleryFilters, pageCursor: string | null = null) => {
-      if (pageCursor && requestBusy.current) return;
+    async (
+      active: GalleryFilters,
+      pageCursor: string | null = null
+    ): Promise<GalleryRequestResult> => {
+      const appendKey = pageCursor
+        ? `${active.q}\u0000${active.from}\u0000${active.to}\u0000${pageCursor}`
+        : null;
+
+      if (appendKey) {
+        const existing = appendRequests.current.get(appendKey);
+        if (existing) return existing;
+      }
+
       const generation = ++requestGeneration.current;
-      requestBusy.current = true;
       setGalleryLoading(true);
       setGalleryError(null);
       setFailedCursor(null);
@@ -89,41 +174,65 @@ export default function HomePage() {
         setCursor(null);
         setHasMore(false);
       }
-      try {
-        const params = new URLSearchParams({ limit: '24' });
-        if (active.q) params.set('q', active.q);
-        if (active.from) params.set('from', active.from);
-        if (active.to) params.set('to', active.to);
-        if (pageCursor) params.set('cursor', pageCursor);
-        const response = await fetch(`/api/achievements?${params}`);
-        if (generation !== requestGeneration.current) return;
-        if (response.status === 401) {
-          setSession({ authenticated: false });
-          setItems([]);
-          setSelectedAchievement(null);
-          setCursor(null);
-          setHasMore(false);
-          return;
+
+      const request = (async (): Promise<GalleryRequestResult> => {
+        try {
+          const params = new URLSearchParams({ limit: '24' });
+          if (active.q) params.set('q', active.q);
+          if (active.from) params.set('from', active.from);
+          if (active.to) params.set('to', active.to);
+          if (pageCursor) params.set('cursor', pageCursor);
+          const response = await fetch(`/api/achievements?${params}`);
+          if (generation !== requestGeneration.current) {
+            return { ok: false, items: [], nextCursor: null, hasMore: false };
+          }
+          if (response.status === 401) {
+            setSession({ authenticated: false });
+            setItems([]);
+            closeDetail();
+            setCursor(null);
+            setHasMore(false);
+            return { ok: false, items: [], nextCursor: null, hasMore: false };
+          }
+          if (!response.ok) throw new Error('Failed to load artwork. Please retry.');
+          const data = (await response.json()) as GalleryResponse;
+          if (generation !== requestGeneration.current) {
+            return { ok: false, items: [], nextCursor: null, hasMore: false };
+          }
+          setItems((previous) => (pageCursor ? [...previous, ...data.items] : data.items));
+          setCursor(data.nextCursor);
+          setHasMore(data.hasMore);
+          return {
+            ok: true,
+            items: data.items,
+            nextCursor: data.nextCursor,
+            hasMore: data.hasMore,
+          };
+        } catch {
+          if (generation === requestGeneration.current) {
+            setGalleryError('Failed to load artwork. Please retry.');
+            setFailedCursor(pageCursor);
+          }
+          return { ok: false, items: [], nextCursor: null, hasMore: false };
+        } finally {
+          if (generation === requestGeneration.current) {
+            setGalleryLoading(false);
+          }
         }
-        if (!response.ok) throw new Error('Failed to load artwork. Please retry.');
-        const data = (await response.json()) as GalleryResponse;
-        if (generation !== requestGeneration.current) return;
-        setItems((previous) => (pageCursor ? [...previous, ...data.items] : data.items));
-        setCursor(data.nextCursor);
-        setHasMore(data.hasMore);
-      } catch {
-        if (generation === requestGeneration.current) {
-          setGalleryError('Failed to load artwork. Please retry.');
-          setFailedCursor(pageCursor);
-        }
-      } finally {
-        if (generation === requestGeneration.current) {
-          requestBusy.current = false;
-          setGalleryLoading(false);
-        }
+      })();
+
+      if (appendKey) {
+        appendRequests.current.set(appendKey, request);
+        void request.finally(() => {
+          if (appendRequests.current.get(appendKey) === request) {
+            appendRequests.current.delete(appendKey);
+          }
+        });
       }
+
+      return request;
     },
-    []
+    [closeDetail]
   );
 
   // Initial load
@@ -144,19 +253,21 @@ export default function HomePage() {
     []
   );
 
-  const applyFilters = (next: GalleryFilters) => {
-    setFilters(next);
-    void fetchAchievements(next);
-  };
+  const applyFilters = useCallback(
+    (next: GalleryFilters) => {
+      closeDetail();
+      setFilters(next);
+      void fetchAchievements(next);
+    },
+    [closeDetail, fetchAchievements]
+  );
 
   // Handle Search input from SearchBar
   const handleSearch = useCallback(
     (q: string) => {
-      const next = { ...filters, q };
-      setFilters(next);
-      void fetchAchievements(next);
+      applyFilters({ ...filters, q });
     },
-    [filters, fetchAchievements]
+    [applyFilters, filters]
   );
 
   const handleApplyDates = (event: FormEvent) => {
@@ -180,6 +291,53 @@ export default function HomePage() {
   const handleLoadMore = async () => {
     if (cursor) await fetchAchievements(filters, cursor);
   };
+
+  const goPrevious = useCallback(() => {
+    if (selectedIndex <= 0) return;
+    const previous = items[selectedIndex - 1];
+    if (previous) selectForViewer(previous);
+  }, [items, selectForViewer, selectedIndex]);
+
+  const goNext = useCallback(async () => {
+    if (selectedIndex < 0) return;
+
+    if (selectedIndex < items.length - 1) {
+      const next = items[selectedIndex + 1];
+      if (next) selectForViewer(next);
+      return;
+    }
+
+    if (!hasMore || !cursor) return;
+
+    invalidateNavigation();
+    const generation = navigationGeneration.current;
+    const requestId = ++navigationRequestId.current;
+    setNavigationPending(true);
+
+    const result = await fetchAchievements(filters, cursor);
+
+    if (
+      generation !== navigationGeneration.current ||
+      requestId !== navigationRequestId.current
+    ) {
+      return;
+    }
+
+    setNavigationPending(false);
+    if (!result.ok) return;
+
+    const next = result.items[0];
+    if (next) selectForViewer(next);
+  }, [
+    cursor,
+    fetchAchievements,
+    filters,
+    hasMore,
+    invalidateNavigation,
+    items,
+    selectForViewer,
+    selectedIndex,
+  ]);
 
   // Handle Login
   const handleLogin = async (e: FormEvent) => {
@@ -231,10 +389,9 @@ export default function HomePage() {
       });
       setSession({ authenticated: false });
       requestGeneration.current++;
-      requestBusy.current = false;
       setGalleryLoading(false);
       setItems([]);
-      setSelectedAchievement(null);
+      closeDetail();
       setCursor(null);
       setHasMore(false);
       setGalleryError(null);
@@ -256,13 +413,17 @@ export default function HomePage() {
 
   // Callback when an achievement is updated
   const handleUpdateAchievement = (updated: AchievementItem) => {
-    setSelectedAchievement(updated);
+    if (!matchesGalleryFilters(updated, filters)) {
+      closeDetail();
+    } else {
+      setSelectedSnapshot(updated);
+    }
     void fetchAchievements(filters);
   };
 
   // Callback when an achievement is deleted
   const handleDeleteAchievement = () => {
-    setSelectedAchievement(null);
+    closeDetail();
     void fetchAchievements(filters);
     void fetchQuota();
   };
@@ -637,10 +798,11 @@ export default function HomePage() {
             hasMore={hasMore && !galleryError}
             hasActiveFilters={Boolean(filters.q || filters.from || filters.to)}
             onLoadMore={() => void handleLoadMore()}
-            onSelectAchievement={(item) => setSelectedAchievement(item)}
+            onSelectAchievement={selectForDetail}
             onOpenAddModal={() => setIsAddModalOpen(true)}
           />
-        )}      </main>
+        )}
+      </main>
 
       {/* Modals */}
       <AddAchievementModal
@@ -651,7 +813,17 @@ export default function HomePage() {
 
       <AchievementDetailModal
         achievement={selectedAchievement}
-        onClose={() => setSelectedAchievement(null)}
+        viewerOpen={isViewerOpen}
+        viewerBackground={viewerBackground}
+        hasPrevious={hasPreviousArtwork}
+        hasNext={hasNextArtwork}
+        navigationPending={navigationPending}
+        onClose={closeDetail}
+        onViewerOpen={() => setIsViewerOpen(true)}
+        onViewerClose={closeViewer}
+        onPrevious={goPrevious}
+        onNext={() => void goNext()}
+        onViewerBackgroundChange={setViewerBackground}
         onUpdate={handleUpdateAchievement}
         onDelete={handleDeleteAchievement}
       />

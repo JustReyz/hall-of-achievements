@@ -36,3 +36,14 @@ body {
   white-space: nowrap;
   border: 0;
 }
+
+/* Artwork viewer zoom/pan transitions */
+.artwork-viewer-artwork {
+  transition: transform 120ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .artwork-viewer-artwork {
+    transition: none;
+  }
+}

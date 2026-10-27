@@ -2,20 +2,60 @@
 
 import { useState, useEffect, useRef, type ChangeEvent, type FormEvent } from 'react';
 import { AchievementItem } from './types';
+import { ArtworkViewer, type ViewerBackground } from './ArtworkViewer';
 
 const RESTORE_MAX_BYTES = 10 * 1024 * 1024; // 10 MiB, matches the upload pipeline
 const RESTORE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tagName = target.tagName.toLowerCase();
+  return (
+    tagName === 'input' ||
+    tagName === 'textarea' ||
+    tagName === 'select' ||
+    target.isContentEditable
+  );
+}
+
+function getFocusableElements(container: HTMLElement): HTMLElement[] {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+    )
+  );
+}
+
 interface AchievementDetailModalProps {
   achievement: AchievementItem | null;
+  viewerOpen: boolean;
+  viewerBackground: ViewerBackground;
+  hasPrevious: boolean;
+  hasNext: boolean;
+  navigationPending: boolean;
   onClose: () => void;
+  onViewerOpen: () => void;
+  onViewerClose: () => void;
+  onPrevious: () => void;
+  onNext: () => void;
+  onViewerBackgroundChange: (background: ViewerBackground) => void;
   onUpdate: (updated: AchievementItem) => void;
   onDelete: (deletedId: string) => void;
 }
 
 export function AchievementDetailModal({
   achievement,
+  viewerOpen,
+  viewerBackground,
+  hasPrevious,
+  hasNext,
+  navigationPending,
   onClose,
+  onViewerOpen,
+  onViewerClose,
+  onPrevious,
+  onNext,
+  onViewerBackgroundChange,
   onUpdate,
   onDelete,
 }: AchievementDetailModalProps) {
@@ -86,40 +126,90 @@ export function AchievementDetailModal({
   const detailModalRef = useRef<HTMLDivElement>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
+  const viewerTriggerRef = useRef<HTMLButtonElement>(null);
+  const wasOpenRef = useRef(false);
+  const wasViewerOpenRef = useRef(false);
 
   useEffect(() => {
     if (!achievement) {
-      if (triggerRef.current && typeof triggerRef.current.focus === 'function') {
-        triggerRef.current.focus();
+      if (wasOpenRef.current) {
+        wasOpenRef.current = false;
+        if (triggerRef.current && typeof triggerRef.current.focus === 'function') {
+          triggerRef.current.focus();
+        }
+        triggerRef.current = null;
       }
       return;
     }
 
-    triggerRef.current = document.activeElement as HTMLElement;
+    if (!wasOpenRef.current) {
+      wasOpenRef.current = true;
+      triggerRef.current = document.activeElement as HTMLElement;
+    } else {
+      return;
+    }
 
     const timer = setTimeout(() => {
-      if (detailModalRef.current) {
-        const focusables = detailModalRef.current.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-        );
-        const first = focusables[0];
-        if (first) {
-          first.focus();
-        }
-      }
+      if (!detailModalRef.current) return;
+      const first = getFocusableElements(detailModalRef.current)[0];
+      first?.focus();
     }, 50);
 
+    return () => clearTimeout(timer);
+  }, [achievement]);
+
+  useEffect(() => {
+    if (viewerOpen) {
+      wasViewerOpenRef.current = true;
+      const timer = setTimeout(() => {
+        detailModalRef.current
+          ?.querySelector<HTMLElement>('[data-viewer-close]')
+          ?.focus();
+      }, 30);
+      return () => clearTimeout(timer);
+    }
+
+    if (wasViewerOpenRef.current) {
+      wasViewerOpenRef.current = false;
+      viewerTriggerRef.current?.focus();
+    }
+    return undefined;
+  }, [viewerOpen]);
+
+  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onClose();
+        if (viewerOpen) {
+          onViewerClose();
+        } else {
+          onClose();
+        }
+        return;
+      }
+
+      if (
+        viewerOpen &&
+        (e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+        !isEditableTarget(e.target)
+      ) {
+        if (e.key === 'ArrowLeft' && hasPrevious) {
+          e.preventDefault();
+          onPrevious();
+        } else if (e.key === 'ArrowRight' && hasNext) {
+          e.preventDefault();
+          onNext();
+        }
         return;
       }
 
       if (e.key === 'Tab' && detailModalRef.current) {
-        const focusables = detailModalRef.current.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-        );
+        const focusContainer = viewerOpen
+          ? detailModalRef.current.querySelector<HTMLElement>('[data-artwork-viewer]')
+          : detailModalRef.current;
+        if (!focusContainer) return;
+
+        const focusables = getFocusableElements(focusContainer);
         if (focusables.length === 0) return;
         const first = focusables[0];
         const last = focusables[focusables.length - 1];
@@ -142,10 +232,9 @@ export function AchievementDetailModal({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => {
-      clearTimeout(timer);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [achievement, onClose]);
+  }, [viewerOpen, hasPrevious, hasNext, onClose, onViewerClose, onPrevious, onNext]);
 
   if (!achievement) return null;
 
@@ -319,9 +408,11 @@ export function AchievementDetailModal({
 
   return (
     <div
+      ref={detailModalRef}
       role="dialog"
       aria-modal="true"
-      aria-labelledby="detail-dialog-title"
+      aria-labelledby={viewerOpen ? undefined : 'detail-dialog-title'}
+      aria-label={viewerOpen ? `Artwork viewer: ${achievement.title}` : undefined}
       style={{
         position: 'fixed',
         inset: 0,
@@ -338,7 +429,7 @@ export function AchievementDetailModal({
       }}
     >
       <div
-        ref={detailModalRef}
+        inert={viewerOpen || undefined}
         style={{
           backgroundColor: '#fff',
           borderRadius: 12,
@@ -450,6 +541,29 @@ export function AchievementDetailModal({
                   objectFit: 'contain',
                 }}
               />
+            )}
+            {achievement.asset && !imageError && (
+              <button
+                ref={viewerTriggerRef}
+                type="button"
+                onClick={onViewerOpen}
+                style={{
+                  position: 'absolute',
+                  right: 12,
+                  bottom: 12,
+                  minHeight: 44,
+                  padding: '9px 14px',
+                  borderRadius: 6,
+                  border: '1px solid #cbd5e1',
+                  backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                  color: '#f8fafc',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                View fullscreen
+              </button>
             )}
             {!imageLoading && (imageError || !displayUrl) && (
               <div
@@ -759,6 +873,20 @@ export function AchievementDetailModal({
           </div>
         </div>
       </div>
+
+      {viewerOpen && (
+        <ArtworkViewer
+          achievement={achievement}
+          background={viewerBackground}
+          hasPrevious={hasPrevious}
+          hasNext={hasNext}
+          navigationPending={navigationPending}
+          onClose={onViewerClose}
+          onPrevious={onPrevious}
+          onNext={onNext}
+          onBackgroundChange={onViewerBackgroundChange}
+        />
+      )}
     </div>
   );
 }

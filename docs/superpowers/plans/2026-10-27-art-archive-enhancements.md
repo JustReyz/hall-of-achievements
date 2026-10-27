@@ -88,14 +88,14 @@ export function clampViewerTransform(
 ): ViewTransform;
 ```
 
-- [ ] Implement and unit-test fit-relative zoom from 1 to 4. Bound pan to the scaled image edges. Reset transform on artwork change or Fit action.
-- [ ] Add Zoom in, Zoom out, Fit, Previous, Next, Close, and light/gray/black background controls. Use fixed colors `#ffffff`, `#808080`, and `#000000`. Keep the chosen background in page-session state without storing art or adding a preference database.
-- [ ] Support pointer drag with pointer capture. Release capture on pointer up or cancellation. Restrict touch-action suppression to the media area.
-- [ ] Use a viewport-filling mode as the reliable fullscreen experience. Call native `requestFullscreen()` only from its button when supported. If denied or unsupported, keep the viewport viewer working. Escape exits viewer mode before closing details, with one keyboard owner. Native `fullscreenchange` must also update the viewer's state.
-- [ ] Arrow keys navigate when focus is outside inputs, range sliders, and other editable controls. Keep all actions available as labeled buttons.
-- [ ] Fetch only `type=display`. On an expired image URL, request a fresh display URL once, then show an error and explicit retry. Ignore stale image responses after navigation or logout.
-- [ ] Let the page own selected achievement ID and active order. At the last loaded item, await the existing next-page request under the same filter snapshot. Select its first new record only if the request and navigation generation remain current. Prevent duplicate next-page requests and preserve selection on failure.
-- [ ] Disable Previous at the first item. Disable Next only when no more items exist. Filter changes close the viewer and invalidate pending navigation. Metadata edits that remove the selected item from the result set also close the viewer after refresh.
+- [x] Implement and unit-test fit-relative zoom from 1 to 4. Bound pan to the scaled image edges. Reset transform on artwork change or Fit action.
+- [x] Add Zoom in, Zoom out, Fit, Previous, Next, Close, and light/gray/black background controls. Use fixed colors `#ffffff`, `#808080`, and `#000000`. Keep the chosen background in page-session state without storing art or adding a preference database.
+- [x] Support pointer drag with pointer capture. Release capture on pointer up or cancellation. Restrict touch-action suppression to the media area.
+- [x] Use a viewport-filling mode as the reliable fullscreen experience. Call native `requestFullscreen()` only from its button when supported. If denied or unsupported, keep the viewport viewer working. Escape exits viewer mode before closing details, with one keyboard owner. Native `fullscreenchange` must also update the viewer's state.
+- [x] Arrow keys navigate when focus is outside inputs, range sliders, and other editable controls. Keep all actions available as labeled buttons.
+- [x] Fetch only `type=display`. On an expired image URL, request a fresh display URL once, then show an error and explicit retry. Ignore stale image responses after navigation or logout.
+- [x] Let the page own selected achievement ID and active order. At the last loaded item, await the existing next-page request under the same filter snapshot. Select its first new record only if the request and navigation generation remain current. Prevent duplicate next-page requests and preserve selection on failure.
+- [x] Disable Previous at the first item. Disable Next only when no more items exist. Filter changes close the viewer and invalidate pending navigation. Metadata edits that remove the selected item from the result set also close the viewer after refresh.
 
 Implement the pan bounds with the fitted dimensions rather than original EXIF dimensions:
 
@@ -384,6 +384,17 @@ Deployments and production migration execution are separate work. This plan does
   - Archive version 1 export/restore round-trip: metadata and asset mappings preserved; five binary objects restored.
   - Archive version 2: rejected before mutation (`Unsupported manifest schema version: 2. Expected version 1.`); unknown metadata field dropped by explicit mapping.
 - No production probes, destructive operations, or browser checks were required for this phase.
+
+### Phase 1 (2026-10-27)
+
+- `npm run typecheck`: passed (`tsc --noEmit`, no diagnostics).
+- Focused suites: `npx vitest run tests/unit/viewer-transform.test.ts tests/integration/accessibility-performance.test.ts tests/integration/achievements-crud.test.ts tests/integration/gallery-empty-state.test.ts tests/integration/adversarial-m2-gallery.test.ts --fileParallelism=false` passed 35/35 tests in 5 files (`viewer-transform` 4, `accessibility-performance` 8, `achievements-crud` 9, `gallery-empty-state` 2, `adversarial-m2-gallery` 12).
+- Browser harness: `node .agent-runtime/phase1-browser-check.mjs` passed 37/37 checks at 1280×900 desktop and 390×844 mobile. Evidence: `.agent-runtime/evidence/phase1-browser-report.json`, `phase1-viewer-desktop.png`, `phase1-viewer-mobile.png`.
+- Browser environment: Next dev server on `localhost:3000`, Chrome DevTools on port 9222, synthetic in-memory PGlite database, `MemoryStorageAdapter`, 35 seeded records, filtered "Tie" set spanning 30 records.
+- Verified in the browser: detail and viewer request only `type=display`; the viewer fills the viewport inside the detail dialog while leaving it mounted and inert; all three fixed backgrounds; 2× zoom, pointer pan, and Fit reset; Previous disabled at the first item; ArrowLeft/ArrowRight navigation; focus wrap at both ends; one Escape closes only the viewer and restores the "View fullscreen" trigger; a second Escape closes details and restores the gallery card; page-session background persistence; pending-state dedupe and single next-page append; display-asset error with explicit retry; automatic download retry; mobile layout without horizontal overflow; viewport fallback when native fullscreen is unavailable; detail dialog remains after viewer close.
+- Throughout the final run, 175 asset requests were observed with 0 `type=original` requests.
+- Development-only support was required and committed separately: `serverExternalPackages: ['@electric-sql/pglite']` in `next.config.ts`, and `globalThis` caching for the in-memory PGlite database and storage adapter so Next route compilation does not discard sessions or uploads. A process restart still resets both.
+- Skipped/deferred: native fullscreen entry was not exercised in a headed browser; the harness verified the documented viewport fallback when the API is unavailable. Original-resolution inspection remains the existing explicit download action and was not part of viewer browsing.
 
 ## Completion condition
 

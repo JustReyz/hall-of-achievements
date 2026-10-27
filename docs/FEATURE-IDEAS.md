@@ -4,7 +4,7 @@ The [implementation plan](superpowers/plans/2026-10-27-art-archive-enhancements.
 
 ## 4. Fullscreen artwork viewing
 
-Status: selected by the owner, included in the implementation plan.
+Status: implemented 2026-10-27 (Phase 1); focused tests and browser checks passed.
 
 Open artwork in a fullscreen viewer to inspect details and browse the archive without returning to the grid.
 
@@ -47,7 +47,7 @@ Status: selected by the owner, included in the implementation plan.
 
 Identify artwork with missing stored images and offer the existing restore action. Distinguish a missing file from a temporary request failure before recommending restoration.
 
-These entries record selected ideas. This planning task does not implement them.
+These entries record selected ideas. Entries not marked implemented remain planned.
 
 ## 12. Recoverable trash
 
@@ -57,7 +57,7 @@ Move deleted artwork to a recoverable trash view before permanent removal. Keep 
 
 ## 13. Viewer backgrounds
 
-Status: selected by the owner, included in the implementation plan.
+Status: implemented 2026-10-27 (Phase 1); page-session backgrounds verified in the browser.
 
 Switch the artwork viewer between light, gray, and black backgrounds to inspect contrast and transparent areas.
 
