@@ -1,0 +1,392 @@
+# Art archive enhancements implementation plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or superpowers:subagent-driven-development to implement this plan task-by-task. Track progress with the checkboxes. Re-read AGENTS.md before execution.
+
+**Goal:** Add the selected browsing, organization, import, export, and recovery features to the private art archive.
+
+**Architecture:** Extend the existing gallery request owner, modal, authenticated API routes, storage adapters, image pipeline, and database migration entry point. Deliver one complete feature phase at a time. Share media-lifecycle operations only where multiple routes must enforce the same invariant.
+
+**Tech stack:** Existing Next.js 15, React 19, TypeScript, Drizzle, PostgreSQL, Sharp, Vitest, and PGlite. Use browser pointer events, Fullscreen API, and Canvas where appropriate.
+
+**Spec:** [Selected feature ideas](../../FEATURE-IDEAS.md). The completed [date-filter feature](../../FEATURE-PLAN.md) is a compatibility requirement.
+
+**Baseline:** Source reviewed at `a579e6c` on 2026-10-27. This is a proposed execution plan. No feature code, migrations, application tests, or deployment were performed while writing it.
+
+## Global constraints
+
+- All artwork, metadata, image probes, collection operations, and exports require the existing owner session. Mutations retain CSRF protection and private responses retain no-store headers.
+- Keep search, applied completion dates, pagination, retry behavior, and request-generation guards working throughout the phases.
+- Do not download originals during ordinary browsing, health checks, or contact sheet generation. Request display or thumbnail assets explicitly.
+- Retain current image validation, 10 MiB original limit, 20-megapixel limit, 70% storage ceiling, three active upload intents, 12 MiB reservation per intent, and 15-minute intent expiry. Import these limits from their existing owners rather than duplicating them.
+- Keep private images and signed URLs out of logs, local storage, service-worker caches, and new third-party services. Revoke temporary object URLs and release decoded images.
+- Use labeled native controls, visible focus, keyboard access, and button targets of at least 44 CSS pixels. Respect reduced-motion preferences for viewer transitions.
+- Add no dependency, provider, scheduler, or public sharing system. Use the installed packages and native platform APIs.
+- Trash has no automatic expiry. Only an explicit permanent-delete action authorizes object removal. Trashed bytes still count toward quota.
+- Process gallery #8 remains optional. Its schema and UI are absent until that phase is separately scheduled.
+
+## Scope and delivery order
+
+The ideas span independent areas, so each phase below is a separate deliverable with its own proof and review. Keep this document as the single execution plan requested by the owner.
+
+| Phase | Ideas | Result | Relative scope |
+| --- | --- | --- | --- |
+| 0 | Prerequisites | Reproduce upload retry and permanent-cleanup hazards in hermetic tests. | Small |
+| 1 | #4, #13 | Fullscreen viewer with zoom, pan, navigation, and three backgrounds. | Medium |
+| 2 | #6 | Clickable exact-tag browsing combined with search and dates. | Medium |
+| 3 | #16 | Persisted thumbnail framing without image changes. | Medium |
+| 4 | #7 | Download a contact sheet from selected artworks. | Medium |
+| 5 | #10 | Manual archive health checks that distinguish missing objects from provider failures. | Medium |
+| 6 | #9 | Sequential batch upload with safe per-file retry. | Large |
+| 7 | #12 | Recoverable trash and retryable permanent cleanup. | Large |
+| 8 | #14 | Ordered collections with safe concurrent edits. | Large |
+| 9 | #8, optional | Additional process images attached to a completed artwork. | Large, deferred |
+
+Phase 0 investigates the dangerous boundaries first. Phases 1 and 2 need no database change. Phases 6 and 7 cannot pass review without closing the reproduced lifecycle hazards.
+
+## Current behavior and ownership
+
+| Concern | Existing owner | Consequence for this plan |
+| --- | --- | --- |
+| Applied filters and pagination | `src/app/page.tsx`, `src/app/api/achievements/route.ts` | Extend these owners. Do not add a second competing gallery fetch loop. |
+| Modal focus and Escape | `src/components/gallery/AchievementDetailModal.tsx` | Add viewer mode within its existing dialog so two Escape listeners cannot close nested dialogs. |
+| Image processing | `src/lib/image/processor.ts` | Display images fit inside 1600 pixels. Thumbnails fit inside 400 pixels. Both preserve the whole image. Cards apply the 4:3 crop in CSS. |
+| Asset access | `src/app/api/achievements/[id]/assets/route.ts` | Signed links last 60 seconds. Omitting `type` also issues an original link. Viewer and export must specify display assets. |
+| Upload flow | `AddAchievementModal.tsx`, intent and finalize routes | Reuse intent, direct upload, and finalize for every batch item. Finalization replay is currently safe only after the consumed record commits. |
+| Permanent deletion | Item DELETE route and `src/lib/storage/maintenance.ts` | Both currently discard cleanup records after storage-delete failures. Fix this before promising recoverable permanent cleanup. |
+| Quota | `src/lib/storage/quota.ts` | All main asset rows are counted, regardless of achievement state. Preserve that behavior for Trash. |
+| Database upgrades | `schema.ts`, `db/index.ts`, `db/migrate.ts` | Existing CREATE TABLE statements do not add columns to deployed tables. There are separate PGlite and pooled PostgreSQL initialization paths. |
+| Backup | `src/lib/operations/export.ts`, `restore.ts` | Writer currently emits version 1. Restore explicitly maps fields. Every persisted addition needs restore mapping and compatibility tests. |
+
+## Phase 0: Establish the lifecycle checks
+
+**Files to inspect:** `src/app/api/uploads/[id]/finalize/route.ts`, `src/app/api/achievements/[id]/route.ts`, `src/lib/storage/maintenance.ts`, `src/lib/db/index.ts`, `tests/integration/uploads.test.ts`, `tests/integration/achievements-crud.test.ts`, and `tests/integration/export-restore.test.ts`.
+
+- [x] Run `npm ci` if dependencies are absent. Preserve the lockfile. (Skipped: `node_modules` was present and the full suite ran; lockfile unchanged.)
+- [x] Run `npm test` and `npm run typecheck` once. Record actual results instead of copying the earlier date-filter results. (`npm test`: 28 files, 286 tests passed, 315.11s. `npm run typecheck`: passed with no output.)
+- [x] In a test using the memory adapter, make one permanent object deletion throw. Confirm that the current code removes its database cleanup record. Keep the corrected expectation as a regression test in Phase 7. (Temporary local harness: DELETE returned 200 with `databaseRowStillPresent: false` and `objectStillPresent: true`; maintenance reported `cleaned: 1` while the object remained.)
+- [x] Send two concurrent first finalizations for one intent and simulate a lost success response. Record duplicate, replay, and quarantine behavior. Keep these cases in Phase 6's suite. (Temporary local harness: both calls returned 200, created 2 achievements and 2 assets for one intent; intent ended `consumed`, replay returned the second achievement, quarantine was removed.)
+- [x] Confirm the two database initialization paths and current backup field mappings. Use synthetic records only. (`CREATE TABLE IF NOT EXISTS` left an existing table without a hypothetical new column. Query-only initialization created all nine tables. Version 1 round-trip preserved achievement metadata, asset keys/dimensions/checksum, and five binary objects. Unknown version 2 was rejected before mutation; an unknown field was dropped.)
+
+Do not leave failing tests on a shared branch. Land each regression with its feature fix, or keep the reproduction local until that phase begins. No production probes or destructive operations are required.
+
+## Phase 1: Fullscreen viewing and backgrounds
+
+**Modify:** `src/components/gallery/AchievementDetailModal.tsx`, `src/app/page.tsx`, `src/app/globals.css`.
+
+**Create:** `src/components/gallery/ArtworkViewer.tsx`, `src/lib/image/viewer-transform.ts`, `tests/unit/viewer-transform.test.ts`.
+
+`ArtworkViewer` renders media and controls inside the existing detail dialog. It does not create another modal or focus trap. The detail modal remains the owner of close and focus restoration.
+
+```ts
+type ViewerBackground = 'light' | 'gray' | 'black';
+type ViewTransform = { zoom: number; x: number; y: number };
+type ViewerSize = { width: number; height: number };
+
+// Proposed pure helper in viewer-transform.ts.
+export function clampViewerTransform(
+	value: ViewTransform, viewport: ViewerSize, fittedImage: ViewerSize
+): ViewTransform;
+```
+
+- [ ] Implement and unit-test fit-relative zoom from 1 to 4. Bound pan to the scaled image edges. Reset transform on artwork change or Fit action.
+- [ ] Add Zoom in, Zoom out, Fit, Previous, Next, Close, and light/gray/black background controls. Use fixed colors `#ffffff`, `#808080`, and `#000000`. Keep the chosen background in page-session state without storing art or adding a preference database.
+- [ ] Support pointer drag with pointer capture. Release capture on pointer up or cancellation. Restrict touch-action suppression to the media area.
+- [ ] Use a viewport-filling mode as the reliable fullscreen experience. Call native `requestFullscreen()` only from its button when supported. If denied or unsupported, keep the viewport viewer working. Escape exits viewer mode before closing details, with one keyboard owner. Native `fullscreenchange` must also update the viewer's state.
+- [ ] Arrow keys navigate when focus is outside inputs, range sliders, and other editable controls. Keep all actions available as labeled buttons.
+- [ ] Fetch only `type=display`. On an expired image URL, request a fresh display URL once, then show an error and explicit retry. Ignore stale image responses after navigation or logout.
+- [ ] Let the page own selected achievement ID and active order. At the last loaded item, await the existing next-page request under the same filter snapshot. Select its first new record only if the request and navigation generation remain current. Prevent duplicate next-page requests and preserve selection on failure.
+- [ ] Disable Previous at the first item. Disable Next only when no more items exist. Filter changes close the viewer and invalidate pending navigation. Metadata edits that remove the selected item from the result set also close the viewer after refresh.
+
+Implement the pan bounds with the fitted dimensions rather than original EXIF dimensions:
+
+```ts
+const zoom = Math.min(4, Math.max(1, value.zoom));
+const maxX = Math.max(0, (fittedImage.width * zoom - viewport.width) / 2);
+const maxY = Math.max(0, (fittedImage.height * zoom - viewport.height) / 2);
+return { zoom, x: Math.max(-maxX, Math.min(maxX, value.x)), y: Math.max(-maxY, Math.min(maxY, value.y)) };
+```
+
+**Proof:** Test zero overflow at zoom 1, clamped zoom, both pan limits, and resize re-clamping. In a browser, verify keyboard focus, one Escape action, page-boundary navigation, delayed responses, mobile fallback, transparent images on all three backgrounds, and no original request. Zoom magnifies the existing 1600-pixel derivative. Original-resolution inspection remains the existing explicit download action.
+
+## Phase 2: Exact-tag browsing
+
+**Modify:** `src/app/page.tsx`, `src/app/api/achievements/route.ts`, `src/lib/validation/achievement.ts`, `src/components/gallery/types.ts`.
+
+**Create:** `src/app/api/tags/route.ts`, `src/components/gallery/TagBrowser.tsx`, `src/lib/gallery/query.ts`, `tests/integration/tag-browser.test.ts`.
+
+- [ ] Move the applied `GalleryFilters` type into gallery types and add `tag: string`. Update `EMPTY_FILTERS`, apply, clear, first-page, retry, append, and mutation refresh call sites together. Clearing dates still preserves search and tag. An All tags control clears only tag.
+- [ ] Normalize a selected tag using existing tag rules, including lowercase and the 24-character limit. Reject invalid inputs with the existing validation error response.
+- [ ] Extract the shared ready-state, search, and date predicates into `buildGalleryConditions(filters)` in `query.ts`. The gallery and tag routes consume the same validated scope. Keep cursor logic in the gallery route.
+- [ ] Add an authenticated `GET /api/tags` returning `{ tags: string[] }`, sorted and distinct across matching ready achievements. Accept `q`, `from`, and `to`; ignore the selected tag so alternatives remain discoverable. After Phase 8, also honor the collection scope. Do not derive available tags from only the current 24 loaded cards.
+- [ ] Apply exact array membership when the gallery has a selected tag. Do not put the tag into `q`, which also searches titles and notes.
+
+```ts
+conditions.push(sql`${achievements.tags} @> ${JSON.stringify([filters.tag])}::jsonb`);
+```
+
+- [ ] Render labeled tag buttons and All tags. Set `aria-pressed` on the active choice. Show loading, unavailable-with-retry, and no-tags states. Retain a selected tag even if it is absent from the latest facet list. Ignore stale tag-list responses.
+- [ ] Requery tags after successful create, edit, trash, or restore operations. Close the viewer and clear contact sheet selection when scope changes.
+
+**Proof:** Seed tags `oil` and `oil-pastel`, plus a title-only occurrence of `oil`. Exact tag selection returns only the actual `oil` member. Test search/date intersection, tags found beyond page one, no tags from pending/deleting records, and unauthenticated denial. After Phase 7, add trashed exclusion to the shared predicate once.
+
+## Phase 3: Thumbnail framing and additive migration support
+
+**Modify:** `src/lib/db/schema.ts`, `src/lib/db/index.ts`, item PATCH/GET and gallery GET projections, `src/components/gallery/types.ts`, `AchievementDetailModal.tsx`, `GalleryCard.tsx`, export and restore operations.
+
+**Create:** `src/lib/db/schema-upgrades.ts`, `tests/integration/thumbnail-framing.test.ts`, `tests/integration/archive-migrations.test.ts`.
+
+- [ ] Add `thumbnailPositionX` and `thumbnailPositionY` as finite real values between 0 and 1, defaulting to 0.5. Add database range constraints and matching API validation. Reject strings, null, infinity, and out-of-range values rather than silently clamping writes.
+- [ ] Put idempotent upgrade SQL in `applyArchiveSchemaUpgrades(client)` in `schema-upgrades.ts`. Call it from both existing initialization branches. The existing locked `db:migrate` entry point must execute these upgrades and propagate failure. Add only each phase's required SQL when implementing that phase.
+
+```sql
+ALTER TABLE achievements ADD COLUMN IF NOT EXISTS thumbnail_position_x REAL NOT NULL DEFAULT 0.5;
+ALTER TABLE achievements ADD COLUMN IF NOT EXISTS thumbnail_position_y REAL NOT NULL DEFAULT 0.5;
+```
+
+Add the two range constraints using named, idempotently installed constraints in the same upgrade. Keep Drizzle declarations and runtime SQL consistent.
+
+- [ ] Include both values in gallery and item responses. Reuse the detail PATCH endpoint and its authenticated metadata-save path.
+- [ ] Add horizontal and vertical sliders with a 4:3 preview and Center action. A keyboard user can change either axis and save. Preserve draft framing when saving fails.
+- [ ] Apply framing only to the gallery card. Keep the full display image and downloadable original unchanged.
+
+```tsx
+objectPosition: `${achievement.thumbnailPositionX * 100}% ${achievement.thumbnailPositionY * 100}%`
+```
+
+- [ ] Add the fields to backup and restore. Write archive version 2 and accept version 1 with centered defaults. Newer unknown archive versions must fail before changing storage or the database.
+- [ ] Test an existing pre-feature database upgrade, repeat execution, fresh PGlite initialization, and the pooled migration path. Do not assume `CREATE TABLE IF NOT EXISTS` upgrades existing rows.
+
+**Proof:** A saved non-center value survives refresh and backup/restore. Original and derivative checksums do not change. Range validation is enforced at both API and database boundaries. Test the pure condition `typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1`, including NaN before JSON serialization. Existing cards default to centered framing.
+
+## Phase 4: Contact sheet export
+
+**Modify:** `src/app/page.tsx`, `GalleryGrid.tsx`, `GalleryCard.tsx`, `src/app/api/achievements/[id]/assets/route.ts`.
+
+**Create:** `src/components/gallery/ContactSheetExport.tsx`, `src/lib/image/contact-sheet.ts`, `tests/unit/contact-sheet.test.ts`, `tests/integration/display-asset-bytes.test.ts`.
+
+- [ ] Add an explicit selection mode with native checkboxes outside the card's open-artwork button. Do not nest interactive controls. Keep selection as ordered achievement IDs in page memory and cap it at 24.
+- [ ] Preserve selection when appending a page. Clear it when filters, collection, session, or archive contents change. Explain that selecting all means loaded artworks, never unseen pages.
+- [ ] Extend the existing asset route with `type=display&delivery=inline`. This authenticated mode loads the server-owned sanitized display key and returns image bytes with `Content-Type: image/webp`, private no-store headers, and `X-Content-Type-Options: nosniff`. Reject inline original requests and client-supplied URLs or keys.
+- [ ] Enforce a 4 MiB display-response bound. Refuse an oversized or invalid derivative with a visible export error rather than routing an original through the function. This stays below Vercel's documented 4.5 MB function payload limit.
+- [ ] Use that same-origin bytes mode for canvas input so canvas export does not depend on storage-provider CORS. Existing signed-link browsing remains unchanged.
+- [ ] Implement `getContactSheetLayout(count)` in `contact-sheet.ts`, accepting 1 through 24. Use up to four columns, 512-by-416 cells, 16-pixel gaps, and 24-pixel outer margins. Reserve 384 pixels for the image and 32 for a plain-text caption. Reject a canvas edge above 4096 pixels.
+
+```ts
+const columns = Math.min(4, count);
+const rows = Math.ceil(count / columns);
+return {
+	width: 48 + columns * 512 + (columns - 1) * 16,
+	height: 48 + rows * 416 + (rows - 1) * 16,
+	columns, rows,
+};
+```
+
+- [ ] Fill the canvas white. Draw complete display images with contain sizing, in selection order, without card framing. Truncate long titles to fit with a visible ellipsis using canvas text measurement. Download `artwork-contact-sheet.png` through `canvas.toBlob`.
+- [ ] Fetch and decode one image at a time. Release each bitmap and temporary URL. Support Cancel, abort on logout, and abandon stale work on scope changes. On any missing or failed image, name the affected artwork and stop. Do not silently export an incomplete sheet.
+
+**Proof:** Unit-test layout at 1, 4, and 24 selections and rejection at 0 and 25. Browser-test a real downloaded PNG, its dimensions, transparency against white, long titles, selection order, failure, cancellation, and no original downloads. The 24-image sheet must be 2144 by 2624 pixels.
+
+## Phase 5: Manual archive health check
+
+**Modify:** `src/lib/storage/adapter.ts`, `memory.ts`, `postgres.ts`, `supabase.ts`, `src/app/page.tsx`, and the detail modal's restore entry point.
+
+**Create:** `src/lib/storage/health.ts`, `src/app/api/archive/health/route.ts`, `src/components/gallery/ArchiveHealthPanel.tsx`, `tests/unit/storage-health.test.ts`, `tests/integration/archive-health.test.ts`.
+
+```ts
+// New adapter method, implemented by all three existing adapters.
+getObjectMetadata(key: string): Promise<StorageObjectMetadata>;
+
+type ObjectHealth = 'present' | 'missing' | 'unknown';
+type AchievementHealth = {
+	id: string;
+	original: ObjectHealth;
+	display: ObjectHealth;
+	thumbnail: ObjectHealth;
+	checkedAt: string;
+};
+```
+
+- [ ] Implement metadata-only object inspection using each provider's metadata or HEAD operation, SQL metadata lookup, or the memory map. No original-byte reads or arbitrary URL fetches.
+- [ ] Only a typed `StorageNotFoundError` means missing. Authentication errors, throttling, transport failures, and timeouts mean unknown. A missing asset record means missing linkage, shown distinctly in the panel.
+- [ ] Add authenticated, CSRF-protected `POST /api/archive/health` with body `{ ids: string[] }`. Accept 1 through 8 unique UUIDs, load their non-trashed ready records server-side, and inspect only their database-owned keys. Return per-artwork results without storage keys or signed URLs.
+- [ ] Bound provider-probe concurrency to three and use request timeouts. A single failed probe produces unknown for that object rather than failing the whole batch.
+- [ ] Start only from Check archive. Page through the current archive scope, submit batches of eight IDs, show progress, and support cancellation. Guard progress with the current scope generation. Do not scan on login, a timer, or every render.
+- [ ] Link a missing-image result to the existing Restore artwork picker by opening details with a restore request. Keep the distinction between metadata restoration and file restoration clear. A health check never deletes, repairs, or replaces automatically.
+
+**Proof:** A missing original with intact derivatives, a missing thumbnail only, absent linkage, and a provider outage produce distinct results. Assert the adapter's `getObject` is never called during probes. Test authentication, malformed/oversized ID batches, server-derived keys, cancellation, and progress over more than eight artworks.
+
+## Phase 6: Batch uploads with safe retry
+
+**Modify:** `AddAchievementModal.tsx`, `src/app/api/uploads/[id]/finalize/route.ts`, schema/upgrades, `src/lib/storage/maintenance.ts`, `src/lib/storage/quota.ts`, backup asset-field mapping, and existing upload/quota tests.
+
+**Create:** `src/components/gallery/BatchUploadList.tsx`, `src/lib/uploads/finalize.ts`, `src/lib/uploads/upload-item.ts`, `tests/integration/batch-upload.test.ts`.
+
+Keep a single-file selection working through the same UI and pipeline. Start with at most 20 selected files and one active upload. This naturally stays below the existing concurrency cap while giving each file separate details and results.
+
+```ts
+type UploadStage = 'editing' | 'queued' | 'uploading' | 'finalizing' | 'unknown' | 'failed' | 'succeeded';
+type UploadQueueItem = {
+	id: string;
+	file: File;
+	title: string;
+	completionDate: string;
+	notes: string;
+	tags: string[];
+	stage: UploadStage;
+	intentId: string | null;
+	achievementId: string | null;
+	error: string | null;
+};
+```
+
+- [ ] First close the finalization replay gap. Move the route's operation into `finalizeUpload` in `src/lib/uploads/finalize.ts`, retaining authentication and body validation at the route boundary.
+- [ ] Durably bind each creation intent to one pending achievement before writing permanent objects. Serialize work for the same intent with a PostgreSQL row lock and re-read its status under that lock. Lock the parent as well for reattachment. A concurrent first call must reuse the bound record, not allocate another achievement.
+- [ ] Retain quarantine until the asset metadata, ready state, and consumed intent commit. Permanent writes must be retryable for the same intent and paths. Retain durable references to any partial writes. Extend expired-intent maintenance to clean a bound pending achievement and its partial objects before discarding their references.
+- [ ] Store an intent's planned permanent keys in `uploadIntents.permanentKeys`, a JSONB string array, before the first permanent write. Use intent-specific immutable paths for replacement objects. Add `assets.retiredObjects`, a JSONB array of `{ keys: string[]; accountedBytes: number }`, for previous versions awaiting cleanup. Both additions default to empty arrays and require the shared upgrade path. Atomically move old keys and their conservative byte allowance into retiredObjects when replacing the active asset. Remove an entry only after all its keys are deleted.
+- [ ] Include retired object bytes in quota. Keep failed quarantine cleanup durably tracked and counted as well. Verify the actual staged-byte envelope against the existing reservation before allowing another item. Reject derivatives exceeding `MAX_DERIVATIVE_BOUND_BYTES` before storage writes. Do not fix an accounting failure by raising the provider ceiling or releasing a reservation early.
+- [ ] A consumed intent returns the same achievement and asset on replay. Validate the linked achievement from the persisted intent, never a caller-supplied fallback. After Phase 7, a replay or attachment must not expose or revive a trashed/deleting item.
+- [ ] Keep replacement behavior covered by existing restore tests. A failed replacement must not erase the last recoverable file or lose cleanup references. If replacement needs versioned keys, keep the old asset record until the new transaction commits and retain any failed old-key cleanup durably. Do not generalize this into a background job framework.
+- [ ] Export only active artwork keys and clear ephemeral retiredObjects in restored asset records. Warn about incomplete cleanup but do not restore obsolete versions as active images. Internal intent and cleanup fields are not new user-facing archive content and do not require a new archive version.
+- [ ] Test the tradeoff explicitly: row-lock serialization can occupy a database connection during bounded storage work. Keep uploads sequential, bound storage requests, and measure the focused upload path before increasing concurrency.
+- [ ] Put the existing intent/PUT/finalize client sequence into `upload-item.ts`. Retain the intent and last confirmed stage on each row. Validate type, size, title, date, notes, and tags using existing rules. Do not keep signed URLs or artwork bytes in persistent browser storage.
+- [ ] A lost finalize response becomes unknown. Retrying sends finalize again for the same intent. If quarantine is confirmed absent and the intent remains usable, retry the upload stage. Create a new intent only after the earlier one is definitively unconsumed and expired or cleaned. Do not restart successful items.
+- [ ] Pause the queue on quota exhaustion or an unresolved unknown outcome. Preserve metadata and show Retry, Remove pending item, and Close after completion. Closing cannot pretend to cancel a finalization already accepted by the server.
+- [ ] Revoke preview URLs as rows are removed or the modal unmounts. Refresh the active gallery and quota after success without replacing filters. Successful items remain identified even if outside the current filters.
+
+**Proof:** Inject a lost success response, concurrent finalize calls, processing failure, partial permanent writes, expired intent, quota rejection, and one failed item among successful items. Assert one achievement per creation intent, successful rows are never re-uploaded, metadata survives retry, originals remain private, and reservation/concurrency limits are unchanged. Keep cleanup records and counted bytes when storage refuses deletion.
+
+## Phase 7: Recoverable trash and reliable permanent deletion
+
+**Modify:** Schema and shared upgrades, gallery query owner, item GET/PATCH/DELETE, asset signing/inline bytes, upload finalization/replay, quota display, `storage/maintenance.ts`, detail deletion copy, page navigation, export and restore.
+
+**Create:** `src/lib/operations/trash.ts`, `src/app/api/trash/route.ts`, `src/app/api/achievements/[id]/restore/route.ts`, `src/app/api/achievements/[id]/purge/route.ts`, `src/components/gallery/TrashPanel.tsx`, `tests/integration/trash.test.ts`, `tests/integration/purge-recovery.test.ts`.
+
+- [ ] Add nullable `achievements.trashedAt` with an additive timestamp upgrade. Retain the existing pending/ready/deleting state values. Centralize normal visibility as ready AND trashedAt IS NULL.
+- [ ] Apply that predicate in gallery, exact-tag, item, asset, contact-sheet, health, attachment, and replay paths. After collections exist, apply it there too. Already-issued signed URLs can remain usable for their existing 60-second lifetime.
+- [ ] Change normal deletion to Move to Trash and update every caller/test expecting permanent deletion. This is an intentional endpoint behavior change. No image bytes are removed at this step.
+
+| Endpoint | Contract |
+| --- | --- |
+| `DELETE /api/achievements/[id]` | Idempotently set trashedAt on a ready item. Return `{ trashed: true, id }`. |
+| `GET /api/trash` | Private, paginated metadata only. Order by trashedAt then ID descending. No image signing or healthy-gallery cursor reuse. |
+| `POST /api/achievements/[id]/restore` | Clear trashedAt only while state remains ready. Restore membership and metadata. Do not claim missing image bytes were recreated. |
+| `DELETE /api/achievements/[id]/purge` | Require a trashed item and explicit UI confirmation. Claim deleting state, then perform retryable object cleanup. Return 200 on completion or 202 when cleanup is pending. |
+
+- [ ] In `trash.ts`, implement `moveToTrash`, `restoreFromTrash`, and `purgeAchievement` using row locks or conditional updates. A restore racing a purge cannot clear a claimed deleting state. Missing IDs and invalid transitions use the existing structured error shape.
+- [ ] Route both permanent purge and maintenance through one cleanup function. Delete all linked objects first, treating verified absence as success. Only after every object is removed may its asset records and achievement be deleted.
+- [ ] Replace the current swallowed-error cleanup. On any provider failure, retain deleting state, asset keys, quota accounting, and a retryable response. A partial successful deletion must converge on retry. Never report fully deleted while bytes or required cleanup references remain.
+- [ ] Keep Trash bytes counted by retaining asset rows until cleanup succeeds. Display that Trash does not free space. Do not add an expiry timer, cron, or automatic purge.
+- [ ] Include Trash in backups and preserve hidden state on restore. Write archive version 3, accepting versions 1 and 2 with absent trashedAt defaulted to null. Exclude irreversible deleting records from normal export and warn when pending cleanup exists.
+
+The shared cleanup's order must be visible in its implementation:
+
+```ts
+await storage.deleteObjects(keys);
+// Delete database references only after the awaited deletion succeeds.
+await db.delete(achievements).where(eq(achievements.id, id));
+```
+
+Both calls operate on an achievement already durably claimed as deleting. Metadata stays present after a thrown storage operation. Keep linked replacement cleanup references from Phase 6 until those keys are also removed.
+
+**Proof:** Trash, restore, repeated actions, default exclusion, asset denial, replay denial, quota retention, and backup round trips. Inject object-delete failure and partial deletion, then retry. Assert cleanup references survive the first failure. Test restore-versus-purge and replacement-versus-trash races. Update old permanent-DELETE tests rather than leaving their previous semantics ambiguous.
+
+## Phase 8: Ordered collections
+
+**Modify:** Schema upgrades, `src/app/page.tsx`, gallery filter types/query scope, export/restore, and trash transitions.
+
+**Create:** `src/lib/operations/collections.ts`, `src/lib/validation/collection.ts`, `src/app/api/collections/route.ts`, `src/app/api/collections/[id]/route.ts`, `src/app/api/collections/[id]/items/route.ts`, `src/components/gallery/CollectionPanel.tsx`, `tests/integration/collections.test.ts`.
+
+- [ ] Add collections with UUID, trimmed name of 1 through 120 characters, revision counter, and timestamps. Add collection_items with collectionId, achievementId, and integer position. Use foreign keys, unique membership, and unique position per collection.
+- [ ] Use cascade deletion from a collection to its membership only. Removing a collection or membership must never remove artwork. Retain membership when art enters Trash so restoring it recovers its position. Permanent purge removes that artwork's memberships.
+- [ ] Add authenticated collection CRUD and an Items endpoint. Limit the initial collection to 200 members and explain the limit in the editor. Accept at most 200 IDs in a membership/order write. Reject duplicate IDs, non-ready/trashed additions, missing artwork, and invalid revision values.
+- [ ] Provide labeled Add to collection, Remove from collection, Move up, and Move down controls. Use these native controls before considering drag behavior.
+- [ ] Treat each membership/order update as a complete ordered ID list with its expected revision. Lock the collection, compare revision, validate the list, replace positions transactionally, and increment revision. A stale revision returns HTTP 409 with no partial changes.
+- [ ] Collection GET for the editor returns the revision and complete membership identifiers, including labeled entries currently in Trash. Reorder requests must preserve those entries unless the owner explicitly removes them. Existing trashed members may remain in a submitted order; adding a newly trashed member is rejected. The normal collection gallery still hides them.
+
+```ts
+type CollectionOrderWrite = { revision: number; achievementIds: string[] };
+type CollectionCursor = {
+	collectionId: string;
+	revision: number;
+	position: number;
+	achievementId: string;
+};
+```
+
+- [ ] Paginate curated views by position and ID using their own validated cursor. Include collection ID and revision in that cursor. Reject a cursor from another collection or an old revision. Do not feed a date/UUID gallery cursor into this route.
+- [ ] On HTTP 409, reload the collection's first page and explain that its contents changed. Search, exact tag, and date filters narrow collection members without changing their curated order. Global gallery ordering remains date/ID descending.
+- [ ] Extend the existing page request owner to choose gallery or collection-items endpoint. Applying a new collection clears its cursor, selection, and viewer navigation generation. Keep `GalleryResponse` pagination fields compatible.
+- [ ] Bump affected collection revisions on trash, restore, or permanent purge so in-flight views cannot mix membership visibility. Lock affected collections in consistent UUID order to prevent deadlocks.
+- [ ] Export collections and membership metadata with archive version 4. Restore validates all referenced achievement IDs, unique memberships/positions, and revisions before any mutation. Accept prior versions with no collections. Preserve session revocation and integrity verification.
+
+**Proof:** Create/rename/delete a collection, add/remove/reorder members, duplicate and invalid membership rejection, concurrent writes, stale/wrong cursor rejection, filtered pagination, and preserved artwork after collection deletion. Trash and restore return an item to its original position. Round-trip the full archive including trashed memberships and framing.
+
+## Phase 9: Optional process gallery
+
+**Status:** Optional. Stop after Phase 8 unless the owner schedules this feature. Do not add its tables or widen asset behavior in earlier phases.
+
+**Modify when scheduled:** Schema/upgrades, upload intent/finalization ownership, quota, main-artwork lifecycle, health checks, and export/restore.
+
+**Create when scheduled:** `src/lib/operations/process-images.ts`, `src/app/api/achievements/[id]/process-images/route.ts`, `src/app/api/achievements/[id]/process-images/[imageId]/route.ts`, `src/components/gallery/ProcessGallery.tsx`, `tests/integration/process-gallery.test.ts`.
+
+- [ ] Add a separate process_images table with ID, parent achievement ID, position, caption up to 500 characters, and original/display/thumbnail asset metadata. Limit the initial feature to ten process images per artwork. Preserve exactly one main asset in the normal gallery join.
+- [ ] Add a validated upload purpose and parent binding to upload intents. Reuse the Phase 6 idempotent operation with distinct keys containing the process-image ID. Process upload must never replace the main-image keys.
+- [ ] Apply existing image limits and quota reservations to each image. Include all process bytes and pending cleanup in quota, health, backup, and parent purge. Reject attachments to trashed/deleting parents.
+- [ ] Add manual ordering and caption editing. Use the same private display flow and viewer. A process image is not a separate finished achievement and must not inflate gallery counts or appear in exact-tag facets.
+- [ ] Preserve process images when the parent is trashed and remove them only through verified permanent cleanup. Failed individual image removal retains its cleanup records and counted bytes.
+- [ ] Write archive version 5 with validated process metadata and bytes. Read earlier versions with no process images. Test additional-image retries, order changes, limits, quota exhaustion, parent races, primary-image preservation, and archive round trips.
+
+The additional files and backup version are the material cost of this optional feature. It changes the current one-image model, so it remains separate from the required phases.
+
+## Verification and checkpoints
+
+Run each new focused test before implementation to confirm it detects the missing behavior, then run it after the change. Use existing PGlite, memory storage, auth helpers, and synthetic image fixtures. Do not add tests that only search source code for new variable names.
+
+Useful commands after each phase are:
+
+```powershell
+npm test -- tests/integration/gallery-pagination.test.ts tests/integration/achievements-crud.test.ts tests/integration/uploads.test.ts tests/integration/export-restore.test.ts
+npm run typecheck
+git diff --check
+```
+
+Run the phase's new test files as well. After a schema phase, also run migration tests against fresh and populated pre-feature databases. Provider metadata behavior and actual browser canvas downloads require real adapter/browser evidence beyond mocked tests.
+
+- [ ] Review and commit each completed phase separately. Stage only its named files, necessary shared-owner updates, tests, and verification evidence. Keep the application runnable between commits.
+- [ ] Update `docs/FEATURE-IDEAS.md` with implemented status only after a phase's automated and browser checks pass.
+- [ ] Record commands, actual results, browser viewport, adapter, and skipped checks in a verification section in this document. Keep private art, signed URLs, and credentials out of evidence.
+- [ ] At the final required milestone, run `npm test`, `npm run typecheck`, and `npm run build` with safe local configuration. Record configuration blockers separately from code failures.
+- [ ] Verify keyboard access and mobile wrapping across the combined flows. Exercise logout while viewer loading, export, upload, and health requests are pending.
+
+## Migration, backup compatibility, and rollback
+
+Before a persisted phase, take a verified private backup and run upgrades against a copy of an existing database. Add columns and tables without rewriting original files or dropping existing data. The migration command must be repeatable and fail visibly.
+
+Backup versions are introduced only with their data changes. Version 2 adds framing, version 3 includes Trash, version 4 adds collections, and optional version 5 adds process images. The current writer emits the latest implemented version. Restore accepts earlier versions with the explicit defaults above, validates all files and relationships, and rejects unknown newer versions before writing anything.
+
+Keep additive schema during rollback. After Trash is used, do not deploy a pre-Trash binary that ignores trashedAt or performs the old permanent DELETE behavior. Roll back UI changes onto a compatibility build that preserves visibility and cleanup invariants. Never drop Trash, collection, or process-image data as an automated rollback step.
+
+Deployments and production migration execution are separate work. This plan does not authorize permanent deletion, public exposure, or executing optional Phase 9.
+
+## Verification log
+
+### Phase 0 (2026-10-27)
+
+- Baseline checkout `a579e6c`; dependencies already installed, lockfile unchanged, `npm ci` skipped.
+- `npm test` at baseline: 28 test files passed, 286 tests passed, 315.11s.
+- `npm run typecheck` at baseline: passed (`tsc --noEmit`, no diagnostics).
+- Temporary local harness (memory adapter, PGlite, synthetic images; removed before commit) reproduced:
+  - Permanent DELETE with a throwing `deleteObjects`: HTTP 200, database row deleted, storage object left behind.
+  - Maintenance with a throwing `deleteObjects`: `cleaned: 1`, achievement and asset rows deleted, storage object left behind.
+  - Two concurrent first finalizations for one intent: both HTTP 200, two achievements and two assets, intent `consumed` pointing at the second, replay returned that second record, quarantine removed.
+  - `initTables` on a pre-feature table: `CREATE TABLE IF NOT EXISTS` did not add the hypothetical new column.
+  - Query-only initialization path: created `achievements`, `assets`, `auth_state`, `push_subscriptions`, `rate_limits`, `reminder_attempts`, `sessions`, `storage_objects`, and `upload_intents`.
+  - Archive version 1 export/restore round-trip: metadata and asset mappings preserved; five binary objects restored.
+  - Archive version 2: rejected before mutation (`Unsupported manifest schema version: 2. Expected version 1.`); unknown metadata field dropped by explicit mapping.
+- No production probes, destructive operations, or browser checks were required for this phase.
+
+## Completion condition
+
+All nine required ideas have one completed end-to-end phase, focused tests pass, migration and backup compatibility are proven, and browser checks have recorded evidence. Optional #8 remains explicitly deferred unless scheduled.
+
+Experience First keeps navigation, selection, and recovery understandable to the owner. The plan prioritizes retry and deletion invariants where an apparently successful action could otherwise lose data or misreport stored artwork.
