@@ -252,4 +252,116 @@ describe('Integration: Gallery Query Engine, Cursor Pagination & Search', () => 
     expect(data.items.length).toBe(1);
     expect(data.items[0]!.title).toBe('Ready Artwork');
   });
+
+  it.each([
+    ['from=2026-10-01&to=2026-10-31', ['Start', 'Middle', 'End']],
+    ['from=2026-10-15&to=2026-10-15', ['Middle']],
+    ['from=2026-10-31', ['End', 'After']],
+    ['to=2026-10-01', ['Before', 'Start']],
+    ['from=&to=%20', ['Before', 'Start', 'Middle', 'End', 'After']],
+    ['from=2099-01-01', []],
+    ['from=2026-10-01&to=2026-10-31&q=needle', ['Middle']],
+  ])('applies inclusive bounds and text search for %s', async (query, expected) => {
+    const { headers } = await createAuthenticatedHeaders();
+    const db = await getDb();
+    const values = [
+      { title: 'Before', completionDate: '2026-09-30' },
+      { title: 'Start', completionDate: '2026-10-01' },
+      { title: 'Middle', completionDate: '2026-10-15', notes: 'needle' },
+      { title: 'End', completionDate: '2026-10-31' },
+      { title: 'After', completionDate: '2026-11-01' },
+    ];
+    await db.insert(achievements).values(
+      values.map((value) => ({
+        ...value,
+        id: crypto.randomUUID(),
+        state: 'ready' as const,
+      }))
+    );
+    const response = await galleryHandler(
+      new NextRequest(`http://localhost:3000/api/achievements?${query}`, { headers })
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toContain('private');
+    expect(response.headers.get('cache-control')).toContain('no-store');
+    const data = (await response.json()) as { items: Array<{ title: string }> };
+    expect(data.items.map((item) => item.title).sort()).toEqual([...expected].sort());
+  });
+
+  it.each([
+    'from=2026-02-30',
+    'to=2025-02-29',
+    'from=not-a-date',
+    'from=2026-10-02&to=2026-10-01',
+  ])('rejects invalid bounds for %s', async (query) => {
+    const { headers } = await createAuthenticatedHeaders();
+    const response = await galleryHandler(
+      new NextRequest(`http://localhost:3000/api/achievements?${query}`, { headers })
+    );
+    expect(response.status).toBe(400);
+    expect(response.headers.get('cache-control')).toContain('no-store');
+    expect(await response.json()).toEqual(
+      expect.objectContaining({
+        error: expect.any(String),
+        code: expect.any(String),
+      })
+    );
+  });
+
+  it('authenticates before validating date filters', async () => {
+    const response = await galleryHandler(
+      new NextRequest('http://localhost:3000/api/achievements?from=invalid')
+    );
+    expect(response.status).toBe(401);
+    expect(response.headers.get('cache-control')).toContain('no-store');
+  });
+
+  it('paginates a filtered range across same-date ties without mixing states', async () => {
+    const { headers } = await createAuthenticatedHeaders();
+    const db = await getDb();
+    const expectedIds = Array.from({ length: 50 }, () => crypto.randomUUID());
+    await db.insert(achievements).values([
+      ...expectedIds.map((id) => ({
+        id,
+        title: 'Match',
+        completionDate: '2026-10-15',
+        state: 'ready' as const,
+      })),
+      { id: crypto.randomUUID(), title: 'Outside', completionDate: '2026-09-30', state: 'ready' as const },
+      { id: crypto.randomUUID(), title: 'Match', completionDate: '2026-10-15', state: 'pending' as const },
+      { id: crypto.randomUUID(), title: 'Match', completionDate: '2026-10-15', state: 'deleting' as const },
+    ]);
+    const received: string[] = [];
+    let cursor: string | null = null;
+    let finished = false;
+    for (let page = 0; page < 3; page++) {
+      const params = new URLSearchParams({
+        from: '2026-10-01',
+        to: '2026-10-31',
+        q: 'Match',
+        limit: '24',
+      });
+      if (cursor) params.set('cursor', cursor);
+      const response = await galleryHandler(
+        new NextRequest(`http://localhost:3000/api/achievements?${params}`, { headers })
+      );
+      expect(response.status).toBe(200);
+      const data = (await response.json()) as {
+        items: Array<{ id: string }>;
+        nextCursor: string | null;
+        hasMore: boolean;
+      };
+      received.push(...data.items.map((item) => item.id));
+      cursor = data.nextCursor;
+      if (!data.hasMore) {
+        finished = true;
+        break;
+      }
+    }
+    expect(finished).toBe(true);
+    expect(cursor).toBeNull();
+    expect(received).toHaveLength(50);
+    expect(new Set(received)).toEqual(new Set(expectedIds));
+    expect(received).toEqual([...received].sort().reverse());
+  });
 });

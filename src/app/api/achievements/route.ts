@@ -1,5 +1,5 @@
 import { type NextRequest } from 'next/server';
-import { eq, and, or, lt, desc, sql } from 'drizzle-orm';
+import { eq, and, or, lt, gte, lte, desc, sql } from 'drizzle-orm';
 import { authenticateApiRequest, jsonError, jsonResponse } from '@/lib/auth/api-guard';
 import { getDb } from '@/lib/db';
 import { achievements, assets, uploadIntents } from '@/lib/db/schema';
@@ -11,6 +11,7 @@ import {
   validateCompletionDate,
   validateNotes,
   validateTags,
+  validateDateRange,
   ValidationError,
 } from '@/lib/validation/achievement';
 
@@ -21,6 +22,13 @@ export async function GET(request: NextRequest) {
   if (errorResponse) return errorResponse;
 
   const url = new URL(request.url);
+  let range: { from: string; to: string };
+  try {
+    range = validateDateRange(url.searchParams.get('from'), url.searchParams.get('to'));
+  } catch (err) {
+    if (err instanceof ValidationError) return jsonError(err.message, err.statusCode, err.code);
+    throw err;
+  }
   const q = url.searchParams.get('q')?.trim() || '';
   const cursorParam = url.searchParams.get('cursor')?.trim();
   const limitParam = parseInt(url.searchParams.get('limit') || String(DEFAULT_PAGE_LIMIT), 10);
@@ -43,6 +51,9 @@ export async function GET(request: NextRequest) {
 
     // Build conditions
     const conditions = [eq(achievements.state, 'ready')];
+
+    if (range.from) conditions.push(gte(achievements.completionDate, range.from));
+    if (range.to) conditions.push(lte(achievements.completionDate, range.to));
 
     // Search query filter (matches title, tags, or notes)
     if (q) {
