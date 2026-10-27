@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback, type FormEvent } from 'react';
+import { useState, useEffect, useCallback, useRef, type FormEvent } from 'react';
 import { AchievementItem, GalleryResponse, StorageQuotaInfo } from '@/components/gallery/types';
 import { SearchBar } from '@/components/gallery/SearchBar';
 import { GalleryGrid } from '@/components/gallery/GalleryGrid';
 import { AddAchievementModal } from '@/components/gallery/AddAchievementModal';
 import { AchievementDetailModal } from '@/components/gallery/AchievementDetailModal';
 import { NotificationPanel } from '@/components/notifications/NotificationPanel';
+import { validateDateRange } from '@/lib/validation/achievement';
 
 interface SessionStatus {
   authenticated: boolean;
@@ -14,6 +15,9 @@ interface SessionStatus {
   idleExpiresAt?: string;
   error?: string;
 }
+
+type GalleryFilters = { q: string; from: string; to: string };
+const EMPTY_FILTERS: GalleryFilters = { q: '', from: '', to: '' };
 
 export default function HomePage() {
   const [session, setSession] = useState<SessionStatus | null>(null);
@@ -26,7 +30,14 @@ export default function HomePage() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [galleryLoading, setGalleryLoading] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [filters, setFilters] = useState<GalleryFilters>(EMPTY_FILTERS);
+  const [galleryError, setGalleryError] = useState<string | null>(null);
+  const [failedCursor, setFailedCursor] = useState<string | null>(null);
+  const [draftFrom, setDraftFrom] = useState('');
+  const [draftTo, setDraftTo] = useState('');
+  const [dateError, setDateError] = useState<string | null>(null);
+  const requestGeneration = useRef(0);
+  const requestBusy = useRef(false);
   const [quota, setQuota] = useState<StorageQuotaInfo | null>(null);
 
   // Modal state
@@ -64,67 +75,111 @@ export default function HomePage() {
     }
   }, []);
 
-  // 3. Fetch Achievements (first page or with search)
-  const fetchAchievements = useCallback(async (q: string = '') => {
-    setGalleryLoading(true);
-    try {
-      const params = new URLSearchParams({ limit: '24' });
-      if (q) params.set('q', q);
-
-      const res = await fetch(`/api/achievements?${params.toString()}`);
-      if (res.ok) {
-        const data = (await res.json()) as GalleryResponse;
-        setItems(data.items);
+  // 3. Fetch Achievements (first page or append)
+  const fetchAchievements = useCallback(
+    async (active: GalleryFilters, pageCursor: string | null = null) => {
+      if (pageCursor && requestBusy.current) return;
+      const generation = ++requestGeneration.current;
+      requestBusy.current = true;
+      setGalleryLoading(true);
+      setGalleryError(null);
+      setFailedCursor(null);
+      if (!pageCursor) {
+        setItems([]);
+        setCursor(null);
+        setHasMore(false);
+      }
+      try {
+        const params = new URLSearchParams({ limit: '24' });
+        if (active.q) params.set('q', active.q);
+        if (active.from) params.set('from', active.from);
+        if (active.to) params.set('to', active.to);
+        if (pageCursor) params.set('cursor', pageCursor);
+        const response = await fetch(`/api/achievements?${params}`);
+        if (generation !== requestGeneration.current) return;
+        if (response.status === 401) {
+          setSession({ authenticated: false });
+          setItems([]);
+          setSelectedAchievement(null);
+          setCursor(null);
+          setHasMore(false);
+          return;
+        }
+        if (!response.ok) throw new Error('Failed to load artwork. Please retry.');
+        const data = (await response.json()) as GalleryResponse;
+        if (generation !== requestGeneration.current) return;
+        setItems((previous) => (pageCursor ? [...previous, ...data.items] : data.items));
         setCursor(data.nextCursor);
         setHasMore(data.hasMore);
+      } catch {
+        if (generation === requestGeneration.current) {
+          setGalleryError('Failed to load artwork. Please retry.');
+          setFailedCursor(pageCursor);
+        }
+      } finally {
+        if (generation === requestGeneration.current) {
+          requestBusy.current = false;
+          setGalleryLoading(false);
+        }
       }
-    } catch (err) {
-      console.error('[GALLERY FETCH ERROR]', err);
-    } finally {
-      setGalleryLoading(false);
-    }
-  }, []);
-
-  // 4. Load More (Cursor Pagination)
-  const handleLoadMore = async () => {
-    if (!cursor || galleryLoading) return;
-    setGalleryLoading(true);
-    try {
-      const params = new URLSearchParams({ limit: '24', cursor });
-      if (searchQuery) params.set('q', searchQuery);
-
-      const res = await fetch(`/api/achievements?${params.toString()}`);
-      if (res.ok) {
-        const data = (await res.json()) as GalleryResponse;
-        setItems((prev) => [...prev, ...data.items]);
-        setCursor(data.nextCursor);
-        setHasMore(data.hasMore);
-      }
-    } catch (err) {
-      console.error('[LOAD MORE ERROR]', err);
-    } finally {
-      setGalleryLoading(false);
-    }
-  };
+    },
+    []
+  );
 
   // Initial load
   useEffect(() => {
     void checkSession().then((isAuth) => {
       if (isAuth) {
-        void fetchAchievements();
+        void fetchAchievements(EMPTY_FILTERS);
         void fetchQuota();
       }
     });
   }, [checkSession, fetchAchievements, fetchQuota]);
 
+  // Invalidate in-flight requests when the page unmounts.
+  useEffect(
+    () => () => {
+      requestGeneration.current++;
+    },
+    []
+  );
+
+  const applyFilters = (next: GalleryFilters) => {
+    setFilters(next);
+    void fetchAchievements(next);
+  };
+
   // Handle Search input from SearchBar
   const handleSearch = useCallback(
     (q: string) => {
-      setSearchQuery(q);
-      void fetchAchievements(q);
+      const next = { ...filters, q };
+      setFilters(next);
+      void fetchAchievements(next);
     },
-    [fetchAchievements]
+    [filters, fetchAchievements]
   );
+
+  const handleApplyDates = (event: FormEvent) => {
+    event.preventDefault();
+    try {
+      const range = validateDateRange(draftFrom, draftTo);
+      setDateError(null);
+      applyFilters({ ...filters, ...range });
+    } catch (error) {
+      setDateError(error instanceof Error ? error.message : 'Enter a valid date range.');
+    }
+  };
+
+  const handleClearDates = () => {
+    setDraftFrom('');
+    setDraftTo('');
+    setDateError(null);
+    applyFilters({ ...filters, from: '', to: '' });
+  };
+
+  const handleLoadMore = async () => {
+    if (cursor) await fetchAchievements(filters, cursor);
+  };
 
   // Handle Login
   const handleLogin = async (e: FormEvent) => {
@@ -148,7 +203,11 @@ export default function HomePage() {
         setAccessCode('');
         const isAuth = await checkSession();
         if (isAuth) {
-          void fetchAchievements();
+          setFilters(EMPTY_FILTERS);
+          setDraftFrom('');
+          setDraftTo('');
+          setDateError(null);
+          void fetchAchievements(EMPTY_FILTERS);
           void fetchQuota();
         }
       } else {
@@ -171,30 +230,40 @@ export default function HomePage() {
         },
       });
       setSession({ authenticated: false });
+      requestGeneration.current++;
+      requestBusy.current = false;
+      setGalleryLoading(false);
       setItems([]);
+      setSelectedAchievement(null);
+      setCursor(null);
+      setHasMore(false);
+      setGalleryError(null);
+      setFailedCursor(null);
+      setFilters(EMPTY_FILTERS);
+      setDraftFrom('');
+      setDraftTo('');
+      setDateError(null);
     } catch {
       // Ignore
     }
   };
 
   // Callback when a new achievement is added
-  const handleAddSuccess = (newAchievement: AchievementItem) => {
-    setItems((prev) => [newAchievement, ...prev]);
+  const handleAddSuccess = () => {
+    void fetchAchievements(filters);
     void fetchQuota();
   };
 
   // Callback when an achievement is updated
   const handleUpdateAchievement = (updated: AchievementItem) => {
-    setItems((prev) =>
-      prev.map((item) => (item.id === updated.id ? updated : item))
-    );
     setSelectedAchievement(updated);
+    void fetchAchievements(filters);
   };
 
   // Callback when an achievement is deleted
-  const handleDeleteAchievement = (deletedId: string) => {
-    setItems((prev) => prev.filter((item) => item.id !== deletedId));
+  const handleDeleteAchievement = () => {
     setSelectedAchievement(null);
+    void fetchAchievements(filters);
     void fetchQuota();
   };
 
@@ -416,30 +485,162 @@ export default function HomePage() {
           style={{
             display: 'flex',
             flexWrap: 'wrap',
-            alignItems: 'center',
+            alignItems: 'flex-end',
             justifyContent: 'space-between',
             gap: 16,
-            marginBottom: 24,
+            marginBottom: 12,
           }}
         >
-          <SearchBar onSearch={handleSearch} disabled={galleryLoading && items.length === 0} />
+          <SearchBar onSearch={handleSearch} />
 
-          <div style={{ fontSize: '14px', color: '#64748b' }}>
-            {items.length} {items.length === 1 ? 'artwork' : 'artworks'} recorded
-          </div>
+          <form
+            onSubmit={handleApplyDates}
+            aria-label="Filter by completion date"
+            style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'end', gap: 12 }}
+          >
+            <label htmlFor="completed-from" style={{ fontSize: '14px', color: '#334155', fontWeight: 500 }}>
+              Completed from
+              <input
+                id="completed-from"
+                type="date"
+                value={draftFrom}
+                onChange={(event) => setDraftFrom(event.target.value)}
+                aria-invalid={Boolean(dateError)}
+                aria-describedby={dateError ? 'date-range-error' : undefined}
+                style={{
+                  display: 'block',
+                  minHeight: 44,
+                  marginTop: 4,
+                  padding: '8px 10px',
+                  borderRadius: 6,
+                  border: '1px solid #cbd5e1',
+                  fontSize: '14px',
+                  color: '#1e293b',
+                  backgroundColor: '#fff',
+                }}
+              />
+            </label>
+            <label htmlFor="completed-through" style={{ fontSize: '14px', color: '#334155', fontWeight: 500 }}>
+              Completed through
+              <input
+                id="completed-through"
+                type="date"
+                value={draftTo}
+                onChange={(event) => setDraftTo(event.target.value)}
+                aria-invalid={Boolean(dateError)}
+                aria-describedby={dateError ? 'date-range-error' : undefined}
+                style={{
+                  display: 'block',
+                  minHeight: 44,
+                  marginTop: 4,
+                  padding: '8px 10px',
+                  borderRadius: 6,
+                  border: '1px solid #cbd5e1',
+                  fontSize: '14px',
+                  color: '#1e293b',
+                  backgroundColor: '#fff',
+                }}
+              />
+            </label>
+            <button
+              type="submit"
+              style={{
+                minWidth: 44,
+                minHeight: 44,
+                padding: '10px 16px',
+                backgroundColor: '#2563eb',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 6,
+                fontWeight: 600,
+                fontSize: '14px',
+                cursor: 'pointer',
+              }}
+            >
+              Apply dates
+            </button>
+            <button
+              type="button"
+              onClick={handleClearDates}
+              style={{
+                minWidth: 44,
+                minHeight: 44,
+                padding: '10px 14px',
+                backgroundColor: '#fff',
+                color: '#475569',
+                border: '1px solid #cbd5e1',
+                borderRadius: 6,
+                fontWeight: 500,
+                fontSize: '14px',
+                cursor: 'pointer',
+              }}
+            >
+              Clear dates
+            </button>
+            {dateError && (
+              <p id="date-range-error" role="alert" style={{ margin: 0, color: '#991b1b', fontSize: '14px' }}>
+                {dateError}
+              </p>
+            )}
+          </form>
         </div>
 
+        <p role="status" aria-live="polite" style={{ margin: '0 0 20px 0', fontSize: '14px', color: '#64748b' }}>
+          {galleryLoading
+            ? 'Loading artwork...'
+            : galleryError
+              ? ''
+              : `${items.length} ${items.length === 1 ? 'artwork' : 'artworks'} loaded`}
+        </p>
+
+        {galleryError && (
+          <div
+            role="alert"
+            style={{
+              marginBottom: 20,
+              padding: 14,
+              borderRadius: 8,
+              backgroundColor: '#fef2f2',
+              border: '1px solid #fecaca',
+              color: '#991b1b',
+            }}
+          >
+            <p style={{ margin: '0 0 10px 0', fontSize: '14px' }}>{galleryError}</p>
+            <button
+              type="button"
+              disabled={galleryLoading}
+              onClick={() => void fetchAchievements(filters, failedCursor)}
+              style={{
+                minWidth: 44,
+                minHeight: 44,
+                padding: '10px 16px',
+                backgroundColor: '#fff',
+                color: '#991b1b',
+                border: '1px solid #fca5a5',
+                borderRadius: 6,
+                fontWeight: 600,
+                fontSize: '14px',
+                cursor: galleryLoading ? 'not-allowed' : 'pointer',
+                opacity: galleryLoading ? 0.7 : 1,
+              }}
+            >
+              Retry loading artwork
+            </button>
+          </div>
+        )}
+
         {/* Gallery Grid */}
-        <GalleryGrid
-          items={items}
-          loading={galleryLoading}
-          hasMore={hasMore}
-          searchQuery={searchQuery}
-          onLoadMore={() => void handleLoadMore()}
-          onSelectAchievement={(item) => setSelectedAchievement(item)}
-          onOpenAddModal={() => setIsAddModalOpen(true)}
-        />
-      </main>
+        {(!galleryError || items.length > 0) && (
+          <GalleryGrid
+            items={items}
+            loading={galleryLoading}
+            hasMore={hasMore && !galleryError}
+            hasActiveFilters={Boolean(filters.q || filters.from || filters.to)}
+            onLoadMore={() => void handleLoadMore()}
+            onSelectAchievement={(item) => setSelectedAchievement(item)}
+            onOpenAddModal={() => setIsAddModalOpen(true)}
+          />
+        )}      </main>
 
       {/* Modals */}
       <AddAchievementModal

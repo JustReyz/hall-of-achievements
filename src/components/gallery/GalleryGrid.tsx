@@ -7,7 +7,7 @@ interface GalleryGridProps {
   items: AchievementItem[];
   loading: boolean;
   hasMore: boolean;
-  searchQuery: string;
+  hasActiveFilters: boolean;
   onLoadMore: () => void;
   onSelectAchievement: (item: AchievementItem) => void;
   onOpenAddModal?: () => void;
@@ -17,7 +17,7 @@ export function GalleryGrid({
   items,
   loading,
   hasMore,
-  searchQuery,
+  hasActiveFilters,
   onLoadMore,
   onSelectAchievement,
   onOpenAddModal,
@@ -48,7 +48,7 @@ export function GalleryGrid({
   };
 
   if (!loading && items.length === 0) {
-    if (searchQuery) {
+    if (hasActiveFilters) {
       return (
         <div
           role="status"
@@ -66,7 +66,7 @@ export function GalleryGrid({
             No matching achievements
           </h3>
           <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>
-            No artwork matched &ldquo;{searchQuery}&rdquo;. Try another title or tag keyword.
+            No artwork matches the current filters. Change your search or clear the dates.
           </p>
         </div>
       );
