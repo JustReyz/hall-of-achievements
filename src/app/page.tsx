@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef, type FormEvent } from 'react';
 import { AchievementItem, GalleryResponse, StorageQuotaInfo } from '@/components/gallery/types';
+import type { GalleryFilters } from '@/components/gallery/types';
 import { SearchBar } from '@/components/gallery/SearchBar';
+import { TagBrowser } from '@/components/gallery/TagBrowser';
 import { GalleryGrid } from '@/components/gallery/GalleryGrid';
 import { AddAchievementModal } from '@/components/gallery/AddAchievementModal';
 import { AchievementDetailModal } from '@/components/gallery/AchievementDetailModal';
@@ -17,8 +19,7 @@ interface SessionStatus {
   error?: string;
 }
 
-type GalleryFilters = { q: string; from: string; to: string };
-const EMPTY_FILTERS: GalleryFilters = { q: '', from: '', to: '' };
+const EMPTY_FILTERS: GalleryFilters = { q: '', from: '', to: '', tag: '' };
 
 interface GalleryRequestResult {
   ok: boolean;
@@ -30,6 +31,7 @@ interface GalleryRequestResult {
 function matchesGalleryFilters(item: AchievementItem, filters: GalleryFilters): boolean {
   if (filters.from && item.completionDate < filters.from) return false;
   if (filters.to && item.completionDate > filters.to) return false;
+  if (filters.tag && !item.tags.includes(filters.tag)) return false;
 
   const query = filters.q.trim().toLowerCase();
   if (!query) return true;
@@ -55,10 +57,14 @@ export default function HomePage() {
   const [filters, setFilters] = useState<GalleryFilters>(EMPTY_FILTERS);
   const [galleryError, setGalleryError] = useState<string | null>(null);
   const [failedCursor, setFailedCursor] = useState<string | null>(null);
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagLoading, setTagLoading] = useState(false);
+  const [tagError, setTagError] = useState<string | null>(null);
   const [draftFrom, setDraftFrom] = useState('');
   const [draftTo, setDraftTo] = useState('');
   const [dateError, setDateError] = useState<string | null>(null);
   const requestGeneration = useRef(0);
+  const tagRequestGeneration = useRef(0);
   const appendRequests = useRef(new Map<string, Promise<GalleryRequestResult>>());
   const navigationGeneration = useRef(0);
   const navigationRequestId = useRef(0);
@@ -99,6 +105,23 @@ export default function HomePage() {
     invalidateNavigation();
     setIsViewerOpen(false);
   }, [invalidateNavigation]);
+
+  const handleSessionExpired = useCallback(() => {
+    requestGeneration.current++;
+    tagRequestGeneration.current++;
+    setSession({ authenticated: false });
+    setGalleryLoading(false);
+    setTagLoading(false);
+    setItems([]);
+    setTags([]);
+    setQuota(null);
+    setCursor(null);
+    setHasMore(false);
+    setGalleryError(null);
+    setFailedCursor(null);
+    setTagError(null);
+    closeDetail();
+  }, [closeDetail]);
 
   const selectForDetail = useCallback(
     (item: AchievementItem) => {
@@ -157,7 +180,7 @@ export default function HomePage() {
       pageCursor: string | null = null
     ): Promise<GalleryRequestResult> => {
       const appendKey = pageCursor
-        ? `${active.q}\u0000${active.from}\u0000${active.to}\u0000${pageCursor}`
+        ? `${active.q}\u0000${active.from}\u0000${active.to}\u0000${active.tag}\u0000${pageCursor}`
         : null;
 
       if (appendKey) {
@@ -181,17 +204,14 @@ export default function HomePage() {
           if (active.q) params.set('q', active.q);
           if (active.from) params.set('from', active.from);
           if (active.to) params.set('to', active.to);
+          if (active.tag) params.set('tag', active.tag);
           if (pageCursor) params.set('cursor', pageCursor);
           const response = await fetch(`/api/achievements?${params}`);
           if (generation !== requestGeneration.current) {
             return { ok: false, items: [], nextCursor: null, hasMore: false };
           }
           if (response.status === 401) {
-            setSession({ authenticated: false });
-            setItems([]);
-            closeDetail();
-            setCursor(null);
-            setHasMore(false);
+            handleSessionExpired();
             return { ok: false, items: [], nextCursor: null, hasMore: false };
           }
           if (!response.ok) throw new Error('Failed to load artwork. Please retry.');
@@ -232,7 +252,43 @@ export default function HomePage() {
 
       return request;
     },
-    [closeDetail]
+    [handleSessionExpired]
+  );
+
+  // 4. Fetch the tag facet for the active search and date filters.
+  const fetchTags = useCallback(
+    async (active: GalleryFilters) => {
+      const generation = ++tagRequestGeneration.current;
+      setTagLoading(true);
+      setTagError(null);
+
+      try {
+        const params = new URLSearchParams();
+        if (active.q) params.set('q', active.q);
+        if (active.from) params.set('from', active.from);
+        if (active.to) params.set('to', active.to);
+        const query = params.toString();
+        const response = await fetch(`/api/tags${query ? `?${query}` : ''}`);
+        if (generation !== tagRequestGeneration.current) return;
+        if (response.status === 401) {
+          handleSessionExpired();
+          return;
+        }
+        if (!response.ok) throw new Error('Failed to load tags. Please retry.');
+        const data = (await response.json()) as { tags: string[] };
+        if (generation !== tagRequestGeneration.current) return;
+        setTags(data.tags);
+      } catch {
+        if (generation === tagRequestGeneration.current) {
+          setTagError('Failed to load tags. Please retry.');
+        }
+      } finally {
+        if (generation === tagRequestGeneration.current) {
+          setTagLoading(false);
+        }
+      }
+    },
+    [handleSessionExpired]
   );
 
   // Initial load
@@ -240,26 +296,39 @@ export default function HomePage() {
     void checkSession().then((isAuth) => {
       if (isAuth) {
         void fetchAchievements(EMPTY_FILTERS);
+        void fetchTags(EMPTY_FILTERS);
         void fetchQuota();
       }
     });
-  }, [checkSession, fetchAchievements, fetchQuota]);
+  }, [checkSession, fetchAchievements, fetchQuota, fetchTags]);
 
   // Invalidate in-flight requests when the page unmounts.
   useEffect(
     () => () => {
       requestGeneration.current++;
+      tagRequestGeneration.current++;
     },
     []
   );
 
   const applyFilters = useCallback(
     (next: GalleryFilters) => {
+      // SearchBar re-emits its debounced value after Clear; an unchanged filter set
+      // must not close an open detail dialog or refetch the gallery.
+      if (
+        next.q === filters.q &&
+        next.from === filters.from &&
+        next.to === filters.to &&
+        next.tag === filters.tag
+      ) {
+        return;
+      }
       closeDetail();
       setFilters(next);
       void fetchAchievements(next);
+      void fetchTags(next);
     },
-    [closeDetail, fetchAchievements]
+    [closeDetail, fetchAchievements, fetchTags, filters]
   );
 
   // Handle Search input from SearchBar
@@ -268,6 +337,18 @@ export default function HomePage() {
       applyFilters({ ...filters, q });
     },
     [applyFilters, filters]
+  );
+
+  // The tag facet ignores the selected tag, so selecting one refreshes only the gallery.
+  const handleSelectTag = useCallback(
+    (tag: string) => {
+      if (tag === filters.tag) return;
+      closeDetail();
+      const next = { ...filters, tag };
+      setFilters(next);
+      void fetchAchievements(next);
+    },
+    [closeDetail, fetchAchievements, filters]
   );
 
   const handleApplyDates = (event: FormEvent) => {
@@ -366,6 +447,7 @@ export default function HomePage() {
           setDraftTo('');
           setDateError(null);
           void fetchAchievements(EMPTY_FILTERS);
+          void fetchTags(EMPTY_FILTERS);
           void fetchQuota();
         }
       } else {
@@ -387,27 +469,20 @@ export default function HomePage() {
           'X-Requested-With': 'XMLHttpRequest',
         },
       });
-      setSession({ authenticated: false });
-      requestGeneration.current++;
-      setGalleryLoading(false);
-      setItems([]);
-      closeDetail();
-      setCursor(null);
-      setHasMore(false);
-      setGalleryError(null);
-      setFailedCursor(null);
-      setFilters(EMPTY_FILTERS);
-      setDraftFrom('');
-      setDraftTo('');
-      setDateError(null);
     } catch {
-      // Ignore
+      // Ignore network failures; local state still closes the archive.
     }
+    handleSessionExpired();
+    setFilters(EMPTY_FILTERS);
+    setDraftFrom('');
+    setDraftTo('');
+    setDateError(null);
   };
 
   // Callback when a new achievement is added
   const handleAddSuccess = () => {
     void fetchAchievements(filters);
+    void fetchTags(filters);
     void fetchQuota();
   };
 
@@ -419,12 +494,14 @@ export default function HomePage() {
       setSelectedSnapshot(updated);
     }
     void fetchAchievements(filters);
+    void fetchTags(filters);
   };
 
   // Callback when an achievement is deleted
   const handleDeleteAchievement = () => {
     closeDetail();
     void fetchAchievements(filters);
+    void fetchTags(filters);
     void fetchQuota();
   };
 
@@ -746,6 +823,15 @@ export default function HomePage() {
           </form>
         </div>
 
+        <TagBrowser
+          tags={tags}
+          selectedTag={filters.tag}
+          loading={tagLoading}
+          error={tagError}
+          onSelect={handleSelectTag}
+          onRetry={() => void fetchTags(filters)}
+        />
+
         <p role="status" aria-live="polite" style={{ margin: '0 0 20px 0', fontSize: '14px', color: '#64748b' }}>
           {galleryLoading
             ? 'Loading artwork...'
@@ -796,7 +882,7 @@ export default function HomePage() {
             items={items}
             loading={galleryLoading}
             hasMore={hasMore && !galleryError}
-            hasActiveFilters={Boolean(filters.q || filters.from || filters.to)}
+            hasActiveFilters={Boolean(filters.q || filters.from || filters.to || filters.tag)}
             onLoadMore={() => void handleLoadMore()}
             onSelectAchievement={selectForDetail}
             onOpenAddModal={() => setIsAddModalOpen(true)}

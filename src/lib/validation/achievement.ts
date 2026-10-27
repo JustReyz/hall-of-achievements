@@ -132,6 +132,26 @@ export function validateNotes(notes: unknown): string {
   return notes;
 }
 
+function normalizeTagValue(tag: string): string {
+  const normalized = tag.trim().toLowerCase();
+  if (normalized.length > 24) {
+    throw new ValidationError('INVALID_TAGS', `Tag "${normalized}" exceeds the maximum length of 24 characters.`);
+  }
+  return normalized;
+}
+
+export function validateTagFilter(tag: unknown): string {
+  if (tag === undefined || tag === null) {
+    return '';
+  }
+
+  if (typeof tag !== 'string') {
+    throw new ValidationError('INVALID_TAGS', 'Tag filter must be a string.');
+  }
+
+  return normalizeTagValue(tag);
+}
+
 export function validateTags(tags: unknown): string[] {
   if (tags === undefined || tags === null) {
     return [];
@@ -152,14 +172,10 @@ export function validateTags(tags: unknown): string[] {
       throw new ValidationError('INVALID_TAGS', 'Each tag must be a string.');
     }
 
-    const trimmed = tag.trim().toLowerCase();
-    if (trimmed.length === 0) continue;
+    const normalized = normalizeTagValue(tag);
+    if (normalized.length === 0) continue;
 
-    if (trimmed.length > 24) {
-      throw new ValidationError('INVALID_TAGS', `Tag "${trimmed}" exceeds the maximum length of 24 characters.`);
-    }
-
-    normalizedSet.add(trimmed);
+    normalizedSet.add(normalized);
   }
 
   return Array.from(normalizedSet);

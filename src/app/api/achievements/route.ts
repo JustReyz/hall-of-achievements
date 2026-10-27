@@ -1,16 +1,19 @@
 import { type NextRequest } from 'next/server';
-import { eq, and, or, lt, gte, lte, desc, sql } from 'drizzle-orm';
+import { eq, and, or, lt, desc } from 'drizzle-orm';
 import { authenticateApiRequest, jsonError, jsonResponse } from '@/lib/auth/api-guard';
 import { getDb } from '@/lib/db';
 import { achievements, assets, uploadIntents } from '@/lib/db/schema';
 import { getStorage } from '@/lib/storage';
 import { validateImageBuffer, ImageValidationError } from '@/lib/image/validator';
 import { processImageDerivatives } from '@/lib/image/processor';
+import { buildGalleryConditions } from '@/lib/gallery/query';
+import type { GalleryFilters } from '@/components/gallery/types';
 import {
   validateTitle,
   validateCompletionDate,
   validateNotes,
   validateTags,
+  validateTagFilter,
   validateDateRange,
   ValidationError,
 } from '@/lib/validation/achievement';
@@ -23,13 +26,16 @@ export async function GET(request: NextRequest) {
 
   const url = new URL(request.url);
   let range: { from: string; to: string };
+  let tag: string;
   try {
     range = validateDateRange(url.searchParams.get('from'), url.searchParams.get('to'));
+    tag = validateTagFilter(url.searchParams.get('tag'));
   } catch (err) {
     if (err instanceof ValidationError) return jsonError(err.message, err.statusCode, err.code);
     throw err;
   }
   const q = url.searchParams.get('q')?.trim() || '';
+  const filters: GalleryFilters = { q, from: range.from, to: range.to, tag };
   const cursorParam = url.searchParams.get('cursor')?.trim();
   const limitParam = parseInt(url.searchParams.get('limit') || String(DEFAULT_PAGE_LIMIT), 10);
   const limit = isNaN(limitParam) || limitParam < 1 ? DEFAULT_PAGE_LIMIT : Math.min(limitParam, 50);
@@ -50,24 +56,7 @@ export async function GET(request: NextRequest) {
     const db = await getDb();
 
     // Build conditions
-    const conditions = [eq(achievements.state, 'ready')];
-
-    if (range.from) conditions.push(gte(achievements.completionDate, range.from));
-    if (range.to) conditions.push(lte(achievements.completionDate, range.to));
-
-    // Search query filter (matches title, tags, or notes)
-    if (q) {
-      // Escape SQL LIKE wildcards ('%', '_', and '\') to ensure literal search matching
-      const escapedQ = q.replace(/[%_\\]/g, '\\$&');
-      const sanitizedQ = `%${escapedQ}%`;
-      conditions.push(
-        or(
-          sql`${achievements.title} ILIKE ${sanitizedQ}`,
-          sql`${achievements.tags}::text ILIKE ${sanitizedQ}`,
-          sql`${achievements.notes} ILIKE ${sanitizedQ}`
-        )!
-      );
-    }
+    const conditions = buildGalleryConditions(filters);
 
     // Cursor pagination condition
     if (cursorDate && cursorId) {

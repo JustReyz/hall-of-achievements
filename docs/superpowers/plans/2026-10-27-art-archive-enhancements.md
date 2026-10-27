@@ -114,18 +114,18 @@ return { zoom, x: Math.max(-maxX, Math.min(maxX, value.x)), y: Math.max(-maxY, M
 
 **Create:** `src/app/api/tags/route.ts`, `src/components/gallery/TagBrowser.tsx`, `src/lib/gallery/query.ts`, `tests/integration/tag-browser.test.ts`.
 
-- [ ] Move the applied `GalleryFilters` type into gallery types and add `tag: string`. Update `EMPTY_FILTERS`, apply, clear, first-page, retry, append, and mutation refresh call sites together. Clearing dates still preserves search and tag. An All tags control clears only tag.
-- [ ] Normalize a selected tag using existing tag rules, including lowercase and the 24-character limit. Reject invalid inputs with the existing validation error response.
-- [ ] Extract the shared ready-state, search, and date predicates into `buildGalleryConditions(filters)` in `query.ts`. The gallery and tag routes consume the same validated scope. Keep cursor logic in the gallery route.
-- [ ] Add an authenticated `GET /api/tags` returning `{ tags: string[] }`, sorted and distinct across matching ready achievements. Accept `q`, `from`, and `to`; ignore the selected tag so alternatives remain discoverable. After Phase 8, also honor the collection scope. Do not derive available tags from only the current 24 loaded cards.
-- [ ] Apply exact array membership when the gallery has a selected tag. Do not put the tag into `q`, which also searches titles and notes.
+- [x] Move the applied `GalleryFilters` type into gallery types and add `tag: string`. Update `EMPTY_FILTERS`, apply, clear, first-page, retry, append, and mutation refresh call sites together. Clearing dates still preserves search and tag. An All tags control clears only tag.
+- [x] Normalize a selected tag using existing tag rules, including lowercase and the 24-character limit. Reject invalid inputs with the existing validation error response.
+- [x] Extract the shared ready-state, search, and date predicates into `buildGalleryConditions(filters)` in `query.ts`. The gallery and tag routes consume the same validated scope. Keep cursor logic in the gallery route.
+- [x] Add an authenticated `GET /api/tags` returning `{ tags: string[] }`, sorted and distinct across matching ready achievements. Accept `q`, `from`, and `to`; ignore the selected tag so alternatives remain discoverable. After Phase 8, also honor the collection scope. Do not derive available tags from only the current 24 loaded cards.
+- [x] Apply exact array membership when the gallery has a selected tag. Do not put the tag into `q`, which also searches titles and notes.
 
 ```ts
 conditions.push(sql`${achievements.tags} @> ${JSON.stringify([filters.tag])}::jsonb`);
 ```
 
-- [ ] Render labeled tag buttons and All tags. Set `aria-pressed` on the active choice. Show loading, unavailable-with-retry, and no-tags states. Retain a selected tag even if it is absent from the latest facet list. Ignore stale tag-list responses.
-- [ ] Requery tags after successful create, edit, trash, or restore operations. Close the viewer and clear contact sheet selection when scope changes.
+- [x] Render labeled tag buttons and All tags. Set `aria-pressed` on the active choice. Show loading, unavailable-with-retry, and no-tags states. Retain a selected tag even if it is absent from the latest facet list. Ignore stale tag-list responses.
+- [x] Requery tags after successful create, edit, trash, or restore operations. Close the viewer and clear contact sheet selection when scope changes.
 
 **Proof:** Seed tags `oil` and `oil-pastel`, plus a title-only occurrence of `oil`. Exact tag selection returns only the actual `oil` member. Test search/date intersection, tags found beyond page one, no tags from pending/deleting records, and unauthenticated denial. After Phase 7, add trashed exclusion to the shared predicate once.
 
@@ -395,6 +395,18 @@ Deployments and production migration execution are separate work. This plan does
 - Throughout the final run, 175 asset requests were observed with 0 `type=original` requests.
 - Development-only support was required and committed separately: `serverExternalPackages: ['@electric-sql/pglite']` in `next.config.ts`, and `globalThis` caching for the in-memory PGlite database and storage adapter so Next route compilation does not discard sessions or uploads. A process restart still resets both.
 - Skipped/deferred: native fullscreen entry was not exercised in a headed browser; the harness verified the documented viewport fallback when the API is unavailable. Original-resolution inspection remains the existing explicit download action and was not part of viewer browsing.
+
+### Phase 2 (2026-10-27)
+
+- `npm run typecheck`: passed (`tsc --noEmit`, no diagnostics).
+- `npx vitest run tests/integration/tag-browser.test.ts`: 7/7 tests passed in 9.94s.
+- Focused suites on the final code: `npx vitest run tests/integration/tag-browser.test.ts tests/integration/gallery-pagination.test.ts tests/integration/achievements-crud.test.ts tests/integration/accessibility-performance.test.ts tests/integration/gallery-empty-state.test.ts tests/integration/adversarial-m2-gallery.test.ts` passed 56/56 tests in 6 files, 112.60s.
+- Browser harness: `node .agent-runtime/phase2-browser-check.mjs` passed 33/33 checks at 1280×900 desktop and 390×844 mobile. Evidence: `.agent-runtime/phase2-run.log`.
+- Browser environment: Next dev server on `localhost:3000`, Chrome DevTools on port 9222, synthetic in-memory PGlite database and `MemoryStorageAdapter`, 35 seeded records recreated through the authenticated dev API after a dev-server restart.
+- Verified in the browser: the facet lists sorted distinct tags from all matching ready rows rather than the loaded page; exact `oil` returns `Before`, `Tie 01`, and `Tie 03` while excluding `oil-pastel` and the title-only `Oil sketch study`; search, exact tag, and date filters intersect; clearing dates preserves search and tag; All tags clears only the tag; a retained selected tag stays usable when absent from the latest facet; loading, unavailable-with-retry, and no-tags states; a stale tag response cannot replace a newer facet; editing a tag adds and removes it in the facet without a reload; mobile layout has no horizontal overflow and 44px tag buttons.
+- The harness initially exposed a race: `SearchBar` re-emits its debounced cleared query, and `applyFilters` closed the open detail dialog even when the filter set was unchanged. `applyFilters` and `handleSelectTag` now return early for an identical filter set; the add/remove edit-requery checks then kept the detail dialog open until explicitly closed.
+- Final SUMMARY: 33 checks, 0 failures, 19 tag requests, 464 asset requests, 0 `type=original` requests.
+- Skipped/deferred: trashed-record exclusion in the shared predicate is added once in Phase 7; collection scope in Phase 8; contact-sheet selection clearing in Phase 4.
 
 ## Completion condition
 

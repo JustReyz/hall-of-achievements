@@ -19,9 +19,11 @@ This records the fourth idea from the feature discussion. The implementation pla
 
 ## 6. Tag browser
 
-Status: selected by the owner, included in the implementation plan.
+Status: implemented 2026-10-27 (Phase 2); focused tests and browser checks passed.
 
 Browse clickable tags to find related artwork without remembering search terms. Build on the existing tags and gallery search.
+
+The implemented browser uses exact tag membership rather than substring search, offers an All tags control, and reflects search and date filters in the available tags.
 
 ## 7. Contact sheet export
 

@@ -1,3 +1,10 @@
+export interface GalleryFilters {
+  q: string;
+  from: string;
+  to: string;
+  tag: string;
+}
+
 export interface AchievementItem {
   id: string;
   title: string;
