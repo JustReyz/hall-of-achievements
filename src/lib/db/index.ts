@@ -16,6 +16,19 @@ let globalDb: AppDatabase | null = null;
 let isDbOutageSimulated = false;
 let hasEnsuredTables = false;
 
+interface CachedPglite {
+  db: AppDatabase;
+  pglite: PGlite;
+}
+
+// Next dev re-evaluates route modules when a new route compiles. Keeping the
+// in-memory database on globalThis preserves sessions and seeded data across
+// those reloads; a process restart still starts from a clean database.
+const globalForDb = globalThis as typeof globalThis & {
+  __hallOfAchievementsPglite?: CachedPglite;
+  __hallOfAchievementsPglitePromise?: Promise<CachedPglite>;
+};
+
 export async function ensureTablesExist(client: {
   query: (sql: string, params?: unknown[]) => Promise<unknown>;
   exec?: (sql: string) => Promise<unknown>;
@@ -328,7 +341,27 @@ export async function getDb(): Promise<AppDatabase> {
 
   // In test environment or offline execution, use hermetic PGlite WASM Postgres
   if (process.env.NODE_ENV === 'test' || !env.DATABASE_URL || env.DATABASE_URL.includes('localhost:5432/test_db')) {
-    const { db: memoryDb, pglite } = await createInMemoryDb();
+    const cached = globalForDb.__hallOfAchievementsPglite;
+    if (cached) {
+      globalClient = cached.pglite;
+      globalDb = cached.db;
+      return cached.db;
+    }
+
+    const pending =
+      globalForDb.__hallOfAchievementsPglitePromise ??
+      createInMemoryDb()
+        .then(({ db: memoryDb, pglite }) => ({ db: memoryDb, pglite }))
+        .then((entry) => {
+          globalForDb.__hallOfAchievementsPglite = entry;
+          return entry;
+        })
+        .finally(() => {
+          delete globalForDb.__hallOfAchievementsPglitePromise;
+        });
+
+    globalForDb.__hallOfAchievementsPglitePromise = pending;
+    const { db: memoryDb, pglite } = await pending;
     globalClient = pglite;
     globalDb = memoryDb;
     return globalDb;
@@ -359,13 +392,23 @@ export async function getDb(): Promise<AppDatabase> {
  * Resets the in-memory database for fresh test isolation.
  */
 export async function resetDatabase(): Promise<AppDatabase> {
-  if (globalClient && typeof (globalClient as { close?: () => Promise<void> }).close === 'function') {
+  const cachedPglite = globalForDb.__hallOfAchievementsPglite?.pglite;
+  const client =
+    cachedPglite ??
+    (globalClient && typeof (globalClient as { close?: () => Promise<void> }).close === 'function'
+      ? (globalClient as { close: () => Promise<void> })
+      : null);
+
+  if (client) {
     try {
-      await (globalClient as { close: () => Promise<void> }).close();
+      await client.close();
     } catch {
       // ignore
     }
   }
+
+  delete globalForDb.__hallOfAchievementsPglite;
+  delete globalForDb.__hallOfAchievementsPglitePromise;
   globalClient = null;
   globalDb = null;
   hasEnsuredTables = false;
