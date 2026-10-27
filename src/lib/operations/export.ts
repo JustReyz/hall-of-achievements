@@ -13,7 +13,7 @@ export interface ManifestFileEntry {
   sha256: string;
 }
 
-export const ARCHIVE_VERSION = 2;
+export const ARCHIVE_VERSION = 3;
 
 export interface ExportManifest {
   version: number;
@@ -68,7 +68,18 @@ export async function exportArchive(options: ExportOptions = {}): Promise<Export
   fs.mkdirSync(path.join(targetDir, 'metadata'), { recursive: true });
   fs.mkdirSync(path.join(targetDir, 'assets'), { recursive: true });
 
-  // 3. Query all ready achievements
+  // 3. Query all ready achievements, including those in Trash: their bytes and
+  // metadata belong to the archive until a purge completes.
+  const deletingRows = await db
+    .select({ id: achievements.id })
+    .from(achievements)
+    .where(eq(achievements.state, 'deleting'));
+  if (deletingRows.length > 0) {
+    console.warn(
+      `[EXPORT WARNING] ${deletingRows.length} artwork(s) are mid-deletion and hold cleanup references. They are not archived; their stored objects may remain until cleanup finishes.`
+    );
+  }
+
   const readyAchievements = await db
     .select()
     .from(achievements)

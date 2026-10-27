@@ -10,6 +10,7 @@ import { getDb } from '@/lib/db';
 import { achievements, assets } from '@/lib/db/schema';
 import { getStorage } from '@/lib/storage';
 import { StorageNotFoundError } from '@/lib/storage/adapter';
+import { normalVisibilityConditions } from '@/lib/gallery/query';
 
 const SIGNED_URL_LIFETIME_SECONDS = 60; // Strictly <= 60 seconds per PRD AC5
 const MAX_INLINE_DISPLAY_BYTES = 4 * 1024 * 1024;
@@ -82,7 +83,7 @@ export async function GET(
         state: achievements.state,
       })
       .from(achievements)
-      .where(and(eq(achievements.id, id), eq(achievements.state, 'ready')));
+      .where(and(eq(achievements.id, id), ...normalVisibilityConditions()));
 
     const achievement = achRows[0];
     if (!achievement) {

@@ -207,9 +207,9 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     );
   }
 
-  if (manifest.version !== 1 && manifest.version !== 2) {
+  if (manifest.version !== 1 && manifest.version !== 2 && manifest.version !== 3) {
     throw new IntegrityError(
-      `Unsupported manifest schema version: ${manifest.version}. Supported versions are 1 and 2.`
+      `Unsupported manifest schema version: ${manifest.version}. Supported versions are 1, 2, and 3.`
     );
   }
 
@@ -290,6 +290,20 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     throw new IntegrityError('metadata/achievements.json must contain an array of achievements.');
   }
 
+  if (manifest.version >= 3) {
+    for (const achievement of rawAchievements) {
+      const trashedAt = achievement.trashedAt;
+      if (trashedAt !== null && trashedAt !== undefined) {
+        const parsed = new Date(trashedAt);
+        if (Number.isNaN(parsed.getTime())) {
+          throw new IntegrityError(
+            `Achievement '${achievement.id}' has an invalid Trash timestamp.`
+          );
+        }
+      }
+    }
+  }
+
   if (manifest.version === 2) {
     for (const achievement of rawAchievements) {
       if (
@@ -333,6 +347,8 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     for (const a of rawAchievements) {
       const thumbnailPositionX = manifest.version === 1 ? 0.5 : a.thumbnailPositionX;
       const thumbnailPositionY = manifest.version === 1 ? 0.5 : a.thumbnailPositionY;
+      const trashedAt =
+        manifest.version >= 3 && a.trashedAt ? new Date(a.trashedAt) : null;
 
       await tx
         .insert(achievements)
@@ -345,6 +361,7 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
           thumbnailPositionX,
           thumbnailPositionY,
           state: a.state,
+          trashedAt,
           createdAt: new Date(a.createdAt),
           updatedAt: new Date(a.updatedAt),
         })
@@ -358,6 +375,7 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
             thumbnailPositionX,
             thumbnailPositionY,
             state: a.state,
+            trashedAt,
             updatedAt: new Date(a.updatedAt),
           },
         });

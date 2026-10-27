@@ -11,6 +11,7 @@ import {
   DELETE as deleteAchievementHandler,
 } from '@/app/api/achievements/[id]/route';
 import { GET as getAssetsHandler } from '@/app/api/achievements/[id]/assets/route';
+import { DELETE as purgeAchievementHandler } from '@/app/api/achievements/[id]/purge/route';
 import { createAuthenticatedHeaders } from '../helpers/auth-helper';
 import { createTestJpeg } from '../helpers/image-fixtures';
 
@@ -505,7 +506,21 @@ describe('Adversarial Stress Test: Milestone 2 Gallery Engine', () => {
       const delRes = await deleteAchievementHandler(delReq, { params: Promise.resolve({ id }) });
       expect(delRes.status).toBe(200);
 
-      // Step C: Verify complete purge of storage objects
+      // Step C: Trash keeps every object until the explicit permanent delete.
+      expect(storage.hasObject(asset!.originalKey)).toBe(true);
+      expect(storage.hasObject(asset!.displayKey)).toBe(true);
+      expect(storage.hasObject(asset!.thumbnailKey)).toBe(true);
+
+      const purgeRes = await purgeAchievementHandler(
+        new NextRequest(`http://localhost:3000/api/achievements/${id}/purge`, {
+          method: 'DELETE',
+          headers,
+        }),
+        { params: Promise.resolve({ id }) }
+      );
+      expect(purgeRes.status).toBe(200);
+
+      // Step D: Verify complete purge of storage objects
       expect(storage.hasObject(asset!.originalKey)).toBe(false);
       expect(storage.hasObject(asset!.displayKey)).toBe(false);
       expect(storage.hasObject(asset!.thumbnailKey)).toBe(false);
@@ -537,6 +552,19 @@ describe('Adversarial Stress Test: Milestone 2 Gallery Engine', () => {
       });
       const delRes = await deleteAchievementHandler(delReq, { params: Promise.resolve({ id }) });
       expect(delRes.status).toBe(200);
+
+      const [trashed] = await db.select().from(achievements).where(eq(achievements.id, id));
+      expect(trashed?.trashedAt).toBeInstanceOf(Date);
+
+      // Missing objects must not block the permanent delete.
+      const purgeRes = await purgeAchievementHandler(
+        new NextRequest(`http://localhost:3000/api/achievements/${id}/purge`, {
+          method: 'DELETE',
+          headers,
+        }),
+        { params: Promise.resolve({ id }) }
+      );
+      expect(purgeRes.status).toBe(200);
 
       const [deleted] = await db.select().from(achievements).where(eq(achievements.id, id));
       expect(deleted).toBeUndefined();

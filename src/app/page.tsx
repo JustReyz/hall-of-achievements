@@ -9,6 +9,7 @@ import { GalleryGrid } from '@/components/gallery/GalleryGrid';
 import { AddAchievementModal } from '@/components/gallery/AddAchievementModal';
 import { AchievementDetailModal } from '@/components/gallery/AchievementDetailModal';
 import { ArchiveHealthPanel } from '@/components/gallery/ArchiveHealthPanel';
+import { TrashPanel } from '@/components/gallery/TrashPanel';
 import { ContactSheetExport } from '@/components/gallery/ContactSheetExport';
 import type { ViewerBackground } from '@/components/gallery/ArtworkViewer';
 import { NotificationPanel } from '@/components/notifications/NotificationPanel';
@@ -601,6 +602,17 @@ export default function HomePage() {
     void fetchQuota();
   };
 
+  // Trash actions change what the gallery and tags should show without changing
+  // the active filters.
+  const handleTrashChanged = useCallback(() => {
+    resetContactSheetSelection();
+    setArchiveRevision((revision) => revision + 1);
+    closeDetail();
+    void fetchAchievements(filters);
+    void fetchTags(filters);
+    void fetchQuota();
+  }, [resetContactSheetSelection, closeDetail, fetchAchievements, fetchTags, fetchQuota, filters]);
+
   // If session check still pending
   if (session === null) {
     return (
@@ -932,6 +944,12 @@ export default function HomePage() {
           filters={filters}
           revision={archiveRevision}
           onOpenRestore={openRestoreRequest}
+          onSessionExpired={handleSessionExpired}
+        />
+
+        <TrashPanel
+          revision={archiveRevision}
+          onChanged={handleTrashChanged}
           onSessionExpired={handleSessionExpired}
         />
 

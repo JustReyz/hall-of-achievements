@@ -90,6 +90,8 @@ export const achievements = pgTable(
       .$type<'pending' | 'ready' | 'deleting'>()
       .notNull()
       .default('pending'),
+    /** Set when the owner moves a finished artwork to Trash. */
+    trashedAt: timestamp('trashed_at', { withTimezone: true, mode: 'date' }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
       .notNull()
       .defaultNow(),
@@ -113,6 +115,7 @@ export const achievements = pgTable(
     ),
     index('idx_achievements_completion_date').on(table.completionDate.desc()),
     index('idx_achievements_state').on(table.state),
+    index('idx_achievements_trashed_at').on(table.trashedAt),
   ]
 );
 

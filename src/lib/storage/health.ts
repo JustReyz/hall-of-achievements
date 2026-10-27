@@ -1,4 +1,5 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, inArray } from 'drizzle-orm';
+import { normalVisibilityConditions } from '@/lib/gallery/query';
 import { getDb } from '@/lib/db';
 import { achievements, assets } from '@/lib/db/schema';
 import { ValidationError } from '@/lib/validation/achievement';
@@ -269,7 +270,7 @@ export async function checkArchiveHealth(
       completionDate: achievements.completionDate,
     })
     .from(achievements)
-    .where(and(inArray(achievements.id, ids), eq(achievements.state, 'ready')));
+    .where(and(inArray(achievements.id, ids), ...normalVisibilityConditions()));
 
   const rowsById = new Map(rows.map((row) => [row.id, row]));
   const foundIds = ids.filter((id) => rowsById.has(id));

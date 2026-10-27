@@ -42,6 +42,9 @@ const ARCHIVE_SCHEMA_UPGRADES = [
     ADD COLUMN IF NOT EXISTS permanent_keys JSONB NOT NULL DEFAULT '[]'::jsonb`,
   `ALTER TABLE upload_intents
     ADD COLUMN IF NOT EXISTS quarantine_cleaned_at TIMESTAMPTZ`,
+  `ALTER TABLE achievements
+    ADD COLUMN IF NOT EXISTS trashed_at TIMESTAMPTZ`,
+  `CREATE INDEX IF NOT EXISTS idx_achievements_trashed_at ON achievements (trashed_at)`,
 ];
 
 export async function applyArchiveSchemaUpgrades(client: UpgradeClient): Promise<void> {

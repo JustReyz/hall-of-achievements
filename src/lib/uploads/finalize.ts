@@ -49,6 +49,27 @@ function fail(status: number, code: string, message: string): FinalizeResult {
 }
 
 /**
+ * Trashed and deleting records must not receive artwork or appear in a replay.
+ */
+function unavailableTarget(row: { state: string; trashedAt: Date | null }): FinalizeResult | null {
+  if (row.state === 'deleting') {
+    return fail(
+      409,
+      'ACHIEVEMENT_DELETING',
+      'Achievement is being deleted and cannot receive new artwork'
+    );
+  }
+  if (row.trashedAt) {
+    return fail(
+      409,
+      'ACHIEVEMENT_TRASHED',
+      'This artwork is in Trash. Restore it before replacing its image.'
+    );
+  }
+  return null;
+}
+
+/**
  * Reads the optional target artwork from the request body. A malformed value is
  * rejected here so a database cast error can never surface as a 500.
  */
@@ -219,16 +240,8 @@ async function bindIntent(
         if (!row) {
           return { kind: 'failed', result: fail(404, 'NOT_FOUND', 'Linked achievement not found') };
         }
-        if (row.state === 'deleting') {
-          return {
-            kind: 'failed',
-            result: fail(
-              409,
-              'ACHIEVEMENT_DELETING',
-              'Achievement is being deleted and cannot receive new artwork'
-            ),
-          };
-        }
+        const blocked = unavailableTarget(row);
+        if (blocked) return { kind: 'failed', result: blocked };
 
         const [existingAsset] = await tx
           .select()
@@ -253,16 +266,8 @@ async function bindIntent(
         if (!row) {
           return { kind: 'failed', result: fail(404, 'NOT_FOUND', 'Linked achievement not found') };
         }
-        if (row.state === 'deleting') {
-          return {
-            kind: 'failed',
-            result: fail(
-              409,
-              'ACHIEVEMENT_DELETING',
-              'Achievement is being deleted and cannot receive new artwork'
-            ),
-          };
-        }
+        const blocked = unavailableTarget(row);
+        if (blocked) return { kind: 'failed', result: blocked };
 
         await tx
           .update(uploadIntents)
@@ -410,6 +415,9 @@ async function buildReplay(db: AppDatabase, intent: UploadIntent): Promise<Final
       'The artwork linked to this upload intent is no longer available.'
     );
   }
+
+  const blocked = unavailableTarget(achievement);
+  if (blocked) return blocked;
 
   return { ok: true, payload: { finalized: true, achievement, asset: assetPayload(asset) } };
 }

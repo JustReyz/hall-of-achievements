@@ -12,6 +12,7 @@ import {
   DELETE as deleteAchievementHandler,
 } from '@/app/api/achievements/[id]/route';
 import { GET as getAssetsHandler } from '@/app/api/achievements/[id]/assets/route';
+import { DELETE as purgeAchievementHandler } from '@/app/api/achievements/[id]/purge/route';
 import { createAuthenticatedHeaders } from '../helpers/auth-helper';
 import { createTestJpeg } from '../helpers/image-fixtures';
 
@@ -243,7 +244,7 @@ describe('Integration: Achievements CRUD & Signed Asset Reads', () => {
   });
 
   describe('DELETE /api/achievements/[id]', () => {
-    it('executes tombstone-first deletion and cleans storage objects idempotently', async () => {
+    it('moves artwork to Trash first and only then deletes it permanently', async () => {
       const { headers } = await createAuthenticatedHeaders();
       const intentId = await setupIntentWithImage();
 
@@ -277,6 +278,10 @@ describe('Integration: Achievements CRUD & Signed Asset Reads', () => {
         params: Promise.resolve({ id }),
       });
       expect(deleteRes.status).toBe(200);
+      expect((await deleteRes.json()) as Record<string, unknown>).toMatchObject({
+        trashed: true,
+        id,
+      });
 
       // Verify immediately hidden from GET
       const getReq = new NextRequest(`http://localhost:3000/api/achievements/${id}`, {
@@ -286,12 +291,27 @@ describe('Integration: Achievements CRUD & Signed Asset Reads', () => {
       const getRes = await getSingleHandler(getReq, { params: Promise.resolve({ id }) });
       expect(getRes.status).toBe(404);
 
-      // Verify storage objects are purged
+      // Trash keeps every byte and record until a permanent delete.
+      expect(storage.hasObject(asset!.originalKey)).toBe(true);
+      expect(storage.hasObject(asset!.displayKey)).toBe(true);
+      expect(storage.hasObject(asset!.thumbnailKey)).toBe(true);
+      const [trashedAch] = await db.select().from(achievements).where(eq(achievements.id, id));
+      expect(trashedAch?.trashedAt).toBeInstanceOf(Date);
+
+      // Permanent deletion now requires the explicit purge action.
+      const purgeRes = await purgeAchievementHandler(
+        new NextRequest(`http://localhost:3000/api/achievements/${id}/purge`, {
+          method: 'DELETE',
+          headers,
+        }),
+        { params: Promise.resolve({ id }) }
+      );
+      expect(purgeRes.status).toBe(200);
+
       expect(storage.hasObject(asset!.originalKey)).toBe(false);
       expect(storage.hasObject(asset!.displayKey)).toBe(false);
       expect(storage.hasObject(asset!.thumbnailKey)).toBe(false);
 
-      // Verify DB row is purged
       const [dbAch] = await db.select().from(achievements).where(eq(achievements.id, id));
       expect(dbAch).toBeUndefined();
     });

@@ -261,9 +261,9 @@ type UploadQueueItem = {
 
 **Create:** `src/lib/operations/trash.ts`, `src/app/api/trash/route.ts`, `src/app/api/achievements/[id]/restore/route.ts`, `src/app/api/achievements/[id]/purge/route.ts`, `src/components/gallery/TrashPanel.tsx`, `tests/integration/trash.test.ts`, `tests/integration/purge-recovery.test.ts`.
 
-- [ ] Add nullable `achievements.trashedAt` with an additive timestamp upgrade. Retain the existing pending/ready/deleting state values. Centralize normal visibility as ready AND trashedAt IS NULL.
-- [ ] Apply that predicate in gallery, exact-tag, item, asset, contact-sheet, health, attachment, and replay paths. After collections exist, apply it there too. Already-issued signed URLs can remain usable for their existing 60-second lifetime.
-- [ ] Change normal deletion to Move to Trash and update every caller/test expecting permanent deletion. This is an intentional endpoint behavior change. No image bytes are removed at this step.
+- [x] Add nullable `achievements.trashedAt` with an additive timestamp upgrade. Retain the existing pending/ready/deleting state values. Centralize normal visibility as ready AND trashedAt IS NULL.
+- [x] Apply that predicate in gallery, exact-tag, item, asset, contact-sheet, health, attachment, and replay paths. After collections exist, apply it there too. Already-issued signed URLs can remain usable for their existing 60-second lifetime.
+- [x] Change normal deletion to Move to Trash and update every caller/test expecting permanent deletion. This is an intentional endpoint behavior change. No image bytes are removed at this step.
 
 | Endpoint | Contract |
 | --- | --- |
@@ -272,11 +272,11 @@ type UploadQueueItem = {
 | `POST /api/achievements/[id]/restore` | Clear trashedAt only while state remains ready. Restore membership and metadata. Do not claim missing image bytes were recreated. |
 | `DELETE /api/achievements/[id]/purge` | Require a trashed item and explicit UI confirmation. Claim deleting state, then perform retryable object cleanup. Return 200 on completion or 202 when cleanup is pending. |
 
-- [ ] In `trash.ts`, implement `moveToTrash`, `restoreFromTrash`, and `purgeAchievement` using row locks or conditional updates. A restore racing a purge cannot clear a claimed deleting state. Missing IDs and invalid transitions use the existing structured error shape.
-- [ ] Route both permanent purge and maintenance through one cleanup function. Delete all linked objects first, treating verified absence as success. Only after every object is removed may its asset records and achievement be deleted.
-- [ ] Replace the current swallowed-error cleanup. On any provider failure, retain deleting state, asset keys, quota accounting, and a retryable response. A partial successful deletion must converge on retry. Never report fully deleted while bytes or required cleanup references remain.
-- [ ] Keep Trash bytes counted by retaining asset rows until cleanup succeeds. Display that Trash does not free space. Do not add an expiry timer, cron, or automatic purge.
-- [ ] Include Trash in backups and preserve hidden state on restore. Write archive version 3, accepting versions 1 and 2 with absent trashedAt defaulted to null. Exclude irreversible deleting records from normal export and warn when pending cleanup exists.
+- [x] In `trash.ts`, implement `moveToTrash`, `restoreFromTrash`, and `purgeAchievement` using row locks or conditional updates. A restore racing a purge cannot clear a claimed deleting state. Missing IDs and invalid transitions use the existing structured error shape.
+- [x] Route both permanent purge and maintenance through one cleanup function. Delete all linked objects first, treating verified absence as success. Only after every object is removed may its asset records and achievement be deleted.
+- [x] Replace the current swallowed-error cleanup. On any provider failure, retain deleting state, asset keys, quota accounting, and a retryable response. A partial successful deletion must converge on retry. Never report fully deleted while bytes or required cleanup references remain.
+- [x] Keep Trash bytes counted by retaining asset rows until cleanup succeeds. Display that Trash does not free space. Do not add an expiry timer, cron, or automatic purge.
+- [x] Include Trash in backups and preserve hidden state on restore. Write archive version 3, accepting versions 1 and 2 with absent trashedAt defaulted to null. Exclude irreversible deleting records from normal export and warn when pending cleanup exists.
 
 The shared cleanup's order must be visible in its implementation:
 
@@ -463,6 +463,21 @@ Deployments and production migration execution are separate work. This plan does
 - The harness found two defects that unit tests could not: the modal passed an unbound `fetch` so every browser upload failed with "Illegal invocation", and the quota assertion exposed `POST /api/achievements` as a second finalize implementation that left 35 seed intents uncounted. Both are fixed above.
 - Not verified here: the cross-process row lock on a pooled PostgreSQL/Supabase deployment, and a real provider under concurrent finalization. PGlite is single-connection, so the focused tests prove the single-record invariant through the in-process chain and the same code path that issues `SELECT ... FOR UPDATE`. No production backup or migration was executed; the additive upgrades were proven against pre-feature PGlite databases and the locked `db:migrate` path.
 - Skipped/deferred: trashed records join these paths in Phase 7, which will also replace the still-swallowing permanent-delete cleanup in `maintenance.ts`. Preview object URLs are no longer created at all, so there is nothing to revoke.
+
+### Phase 7 (2026-10-27)
+
+- `npm run typecheck`: passed (`tsc --noEmit`, no diagnostics).
+- `npx eslint` over the changed source and test files: no findings.
+- New Phase 7 suites: `npx vitest run tests/integration/trash.test.ts tests/integration/purge-recovery.test.ts` passed 13/13 tests in 2 files, 20.31s.
+- Regression set: `npx vitest run tests/integration/trash.test.ts tests/integration/purge-recovery.test.ts tests/integration/achievements-crud.test.ts tests/integration/adversarial-m2-gallery.test.ts tests/integration/gallery-pagination.test.ts tests/integration/tag-browser.test.ts tests/integration/archive-health.test.ts tests/integration/archive-migrations.test.ts tests/integration/batch-upload.test.ts tests/integration/export-restore.test.ts tests/integration/thumbnail-framing.test.ts` passed 108/108 tests in 11 files, 161.11s.
+- Browser harness: `node .agent-runtime/phase7-browser-check.mjs` passed 15/15 checks at 1280×900 and 390×844, with 0 page exceptions. Evidence (local, Git-ignored): `.agent-runtime/evidence/phase7-browser-report.json`, `phase7-trash-desktop.png`, `phase7-trash-mobile.png`.
+- Browser environment: Next dev server on `localhost:3000` restarted for the schema change, Chrome DevTools on port 9222, synthetic in-memory PGlite archive reseeded to 35 records. The harness creates one artwork through the authenticated API, then drives the dialog and Trash panel; JavaScript confirms are auto-accepted.
+- Verified in the browser: the detail dialog offers "Move to Trash" instead of a permanent delete; the artwork leaves the gallery while the trash list keeps its metadata; the gallery catalogue shrinks by one; the Trash panel shows Restore and Delete permanently, states that trashed bytes still count toward storage, and keeps 44px controls; Restore returns the card to the gallery and empties its trash row; Trash then Delete permanently removes the record and the trash list entry, returning the archive to its 35 seed records; the panel fits a 390px viewport without horizontal overflow.
+- The migration suite caught a real ordering defect: the fresh-database bootstrap created the `trashed_at` index before the upgrade that adds the column, so a pre-feature database would have failed initialization. The index now lives only in the shared upgrade list, which runs after every `ALTER TABLE`, and the legacy-database test passes.
+- Archive version 3 carries `trashedAt`; versions 1 and 2 restore with `null`. Export still writes only active keys, excludes deleting records, and warns about both pending cleanup and mid-deletion records. Restore validates a Trash timestamp before any mutation.
+- Changed behavior for callers: `DELETE /api/achievements/[id]` now trashes instead of deleting. Existing crud and adversarial-gallery tests were rewritten to trash, assert kept bytes, then purge explicitly, rather than leaving the old permanent-delete expectations ambiguous.
+- Not verified here: a real storage provider refusing deletion, and a production or copied PostgreSQL migration run. Both cleanup paths were exercised with the memory adapter, PGlite, and injected failures. No production backup was taken or restored.
+- Skipped/deferred: collections join the visibility predicate in Phase 8. No expiry timer, cron, or automatic purge was added.
 
 ## Completion condition
 

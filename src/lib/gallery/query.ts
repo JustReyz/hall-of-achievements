@@ -1,9 +1,17 @@
-import { eq, gte, lte, or, sql, type SQL } from 'drizzle-orm';
+import { eq, gte, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import { achievements } from '@/lib/db/schema';
 import type { GalleryFilters } from '@/components/gallery/types';
 
+/**
+ * The single definition of normal visibility: a finished artwork that is not in
+ * Trash. Gallery, tags, items, assets, health, and replay all consume this.
+ */
+export function normalVisibilityConditions(): SQL[] {
+  return [eq(achievements.state, 'ready'), isNull(achievements.trashedAt)];
+}
+
 export function buildGalleryConditions(filters: GalleryFilters): SQL[] {
-  const conditions: SQL[] = [eq(achievements.state, 'ready')];
+  const conditions: SQL[] = normalVisibilityConditions();
 
   if (filters.from) {
     conditions.push(gte(achievements.completionDate, filters.from));

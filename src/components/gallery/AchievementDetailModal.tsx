@@ -334,7 +334,7 @@ export function AchievementDetailModal({
 
   const handleDelete = async () => {
     const confirmed = window.confirm(
-      `Are you sure you want to permanently delete "${achievement.title}"?\nThis removes all artwork images and metadata irreversibly.`
+      `Move "${achievement.title}" to Trash?\nIt leaves the gallery but its images and metadata are kept. Restore it from Trash, or delete it permanently from there.`
     );
     if (!confirmed) return;
 
@@ -853,7 +853,7 @@ export function AchievementDetailModal({
                         fontSize: '14px',
                       }}
                     >
-                      🗑️ {deleting ? 'Deleting...' : 'Delete'}
+                      🗑️ {deleting ? 'Moving to Trash...' : 'Move to Trash'}
                     </button>
                   </div>
                 </div>

@@ -116,6 +116,7 @@ export async function initTables(client: {
         notes TEXT,
         tags JSONB NOT NULL DEFAULT '[]'::jsonb,
         state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'ready', 'deleting')),
+        trashed_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
@@ -254,6 +255,7 @@ export async function initTables(client: {
         CONSTRAINT achievements_thumbnail_position_y_check
         CHECK (thumbnail_position_y >= 0 AND thumbnail_position_y <= 1),
       state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'ready', 'deleting')),
+      trashed_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`,

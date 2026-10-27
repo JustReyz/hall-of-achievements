@@ -3,7 +3,8 @@ import { eq, and } from 'drizzle-orm';
 import { authenticateApiRequest, jsonError, jsonResponse } from '@/lib/auth/api-guard';
 import { getDb } from '@/lib/db';
 import { achievements, assets } from '@/lib/db/schema';
-import { getStorage } from '@/lib/storage';
+import { normalVisibilityConditions } from '@/lib/gallery/query';
+import { moveToTrash, TrashError } from '@/lib/operations/trash';
 import {
   validateTitle,
   validateCompletionDate,
@@ -48,7 +49,7 @@ export async function GET(
       })
       .from(achievements)
       .leftJoin(assets, eq(assets.achievementId, achievements.id))
-      .where(and(eq(achievements.id, id), eq(achievements.state, 'ready')));
+      .where(and(eq(achievements.id, id), ...normalVisibilityConditions()));
 
     const item = rows[0];
     if (!item) {
@@ -85,7 +86,7 @@ export async function PATCH(
   const existingRows = await db
     .select()
     .from(achievements)
-    .where(and(eq(achievements.id, id), eq(achievements.state, 'ready')));
+    .where(and(eq(achievements.id, id), ...normalVisibilityConditions()));
 
   const existing = existingRows[0];
   if (!existing) {
@@ -162,54 +163,17 @@ export async function DELETE(
   const { id } = await params;
   if (!id) return jsonError('Missing achievement ID', 400, 'INVALID_INPUT');
 
-  const db = await getDb();
-  const storage = getStorage();
-
-  // 1. Check existence
-  const existingRows = await db
-    .select()
-    .from(achievements)
-    .where(eq(achievements.id, id));
-
-  const existing = existingRows[0];
-  if (!existing) {
-    return jsonError('Achievement not found', 404, 'NOT_FOUND');
-  }
-
-  // 2. Step 1 (Tombstone): immediately hide from gallery
-  await db
-    .update(achievements)
-    .set({
-      state: 'deleting',
-      updatedAt: new Date(),
-    })
-    .where(eq(achievements.id, id));
-
-  // 3. Step 2 (Idempotent Asset Storage Cleanup)
-  const assetRows = await db
-    .select()
-    .from(assets)
-    .where(eq(assets.achievementId, id));
-
-  const asset = assetRows[0];
-  if (asset) {
-    try {
-      await storage.deleteObjects([
-        asset.originalKey,
-        asset.displayKey,
-        asset.thumbnailKey,
-      ]);
-    } catch (err) {
-      console.warn('[STORAGE CLEANUP WARNING during deletion]', err);
-      // Storage deletion failure does not halt permanent tombstone / database cleanup
+  try {
+    const db = await getDb();
+    // Normal deletion is recoverable: it hides the artwork and keeps every byte
+    // and record until an explicit permanent-delete action.
+    const result = await moveToTrash(db, id);
+    return jsonResponse({ trashed: true, id: result.id, alreadyTrashed: result.alreadyTrashed });
+  } catch (err) {
+    if (err instanceof TrashError) {
+      return jsonError(err.message, err.statusCode, err.code);
     }
+    console.error('[DELETE /api/achievements/:id ERROR]', err);
+    return jsonError('Failed to move artwork to Trash', 500, 'TRASH_FAILED');
   }
-
-  // 4. Step 3 (Permanent DB Deletion)
-  await db.delete(achievements).where(eq(achievements.id, id));
-
-  return jsonResponse({
-    success: true,
-    deletedId: id,
-  });
 }

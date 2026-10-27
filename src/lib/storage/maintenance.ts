@@ -1,6 +1,7 @@
 import { eq, and, lt, isNull, ne } from 'drizzle-orm';
 import { AppDatabase } from '../db';
 import { uploadIntents, achievements, assets, type RetiredObject, type UploadIntent } from '../db/schema';
+import { purgeDeletingAchievement } from '../operations/trash';
 import { StorageAdapter } from './adapter';
 
 export interface CleanupResult {
@@ -175,7 +176,8 @@ export async function cleanRetiredObjects(
 }
 
 /**
- * Idempotently cleans up assets and purges achievements stuck in 'deleting' state.
+ * Purges achievements stuck in 'deleting' through the shared cleanup. A provider
+ * failure keeps the record and its keys so the next pass can converge.
  */
 export async function cleanDeletingAchievements(
   db: AppDatabase,
@@ -188,43 +190,8 @@ export async function cleanDeletingAchievements(
 
   let cleaned = 0;
   for (const ach of deleting) {
-    const linkedAssets = await db
-      .select({
-        id: assets.id,
-        originalKey: assets.originalKey,
-        displayKey: assets.displayKey,
-        thumbnailKey: assets.thumbnailKey,
-        retiredObjects: assets.retiredObjects,
-      })
-      .from(assets)
-      .where(eq(assets.achievementId, ach.id));
-
-    let cleanupPending = false;
-
-    for (const asset of linkedAssets) {
-      await storage
-        .deleteObjects([asset.originalKey, asset.displayKey, asset.thumbnailKey])
-        .catch(() => {});
-
-      const remaining: RetiredObject[] = [];
-      for (const retired of asset.retiredObjects) {
-        try {
-          await storage.deleteObjects(retired.keys);
-        } catch {
-          remaining.push(retired);
-        }
-      }
-
-      if (remaining.length > 0) {
-        await db.update(assets).set({ retiredObjects: remaining }).where(eq(assets.id, asset.id));
-        cleanupPending = true;
-      }
-    }
-
-    if (cleanupPending) continue;
-
-    await db.delete(achievements).where(eq(achievements.id, ach.id));
-    cleaned++;
+    const outcome = await purgeDeletingAchievement(db, storage, ach.id);
+    if (outcome === 'deleted') cleaned++;
   }
 
   return cleaned;

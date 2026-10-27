@@ -59,9 +59,11 @@ These entries record selected ideas. Entries not marked implemented remain plann
 
 ## 12. Recoverable trash
 
-Status: selected by the owner, included in the implementation plan.
+Status: implemented 2026-10-27 (Phase 7); focused tests and browser checks passed.
 
 Move deleted artwork to a recoverable trash view before permanent removal. Keep its images and metadata until the owner explicitly chooses permanent deletion.
+
+Deleting an artwork now moves it to Trash, where it stays hidden from the gallery, search, tags, health checks, and upload replay while still counting toward storage. Restoration is one action; permanent deletion reports pending cleanup instead of claiming success when the provider refuses to remove the files.
 
 ## 13. Viewer backgrounds
 
