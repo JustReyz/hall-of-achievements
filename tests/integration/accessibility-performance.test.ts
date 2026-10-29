@@ -50,9 +50,9 @@ describe('Integration: Frontend Accessibility (WCAG 2.2 AA) & Performance Budget
       const modalPath = path.join(rootDir, 'src', 'components', 'gallery', 'AddAchievementModal.tsx');
       const modalContent = fs.readFileSync(modalPath, 'utf-8');
 
-      expect(modalContent).toContain("e.key === 'Escape'");
-      expect(modalContent).toContain("e.key === 'Tab'");
-      expect(modalContent).toContain('e.shiftKey');
+      expect(modalContent).toContain("event.key === 'Escape'");
+      expect(modalContent).toContain("event.key === 'Tab'");
+      expect(modalContent).toContain('event.shiftKey');
       expect(modalContent).toContain('document.activeElement');
       expect(modalContent).toContain('triggerRef.current');
       expect(modalContent).toContain('modalRef');
@@ -83,8 +83,16 @@ describe('Integration: Frontend Accessibility (WCAG 2.2 AA) & Performance Budget
 
       const searchPath = path.join(rootDir, 'src', 'components', 'gallery', 'SearchBar.tsx');
       const searchContent = fs.readFileSync(searchPath, 'utf-8');
-      expect(searchContent).toContain('minWidth: 44');
-      expect(searchContent).toContain('minHeight: 44');
+      expect(searchContent).toContain('gallery-search-clear');
+
+      const globalsContent = fs.readFileSync(
+        path.join(rootDir, 'src', 'app', 'globals.css'),
+        'utf-8'
+      );
+      expect(globalsContent).toContain('.gallery-search-clear');
+      expect(globalsContent).toMatch(
+        /\.gallery-search-clear\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/
+      );
     });
   });
 
@@ -97,8 +105,16 @@ describe('Integration: Frontend Accessibility (WCAG 2.2 AA) & Performance Budget
       expect(cardContent).toContain('decoding="async"');
       expect(cardContent).toContain('width={400}');
       expect(cardContent).toContain('height={300}');
-      expect(cardContent).toContain("aspectRatio: '4 / 3'");
-      expect(cardContent).toContain('#475569');
+      expect(cardContent).toContain('gallery-card-media');
+
+      const globalsContent = fs.readFileSync(
+        path.join(rootDir, 'src', 'app', 'globals.css'),
+        'utf-8'
+      );
+      expect(globalsContent).toMatch(/\.gallery-card-media\s*\{[^}]*aspect-ratio:\s*4 \/ 3;/);
+      expect(globalsContent).toMatch(/\.gallery-card-image\s*\{[^}]*object-fit:\s*cover;/);
+      expect(globalsContent).toContain('--gallery-muted: #53645e;');
+      expect(globalsContent).toMatch(/\.gallery-card-date\s*\{[^}]*color:\s*var\(--gallery-muted\);/);
     });
 
     it('produces WebP thumbnails well within the <=1 MiB initial gallery transfer budget', async () => {

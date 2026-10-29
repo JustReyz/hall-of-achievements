@@ -10,6 +10,7 @@ import { AddAchievementModal } from '@/components/gallery/AddAchievementModal';
 import { AchievementDetailModal } from '@/components/gallery/AchievementDetailModal';
 import { ArchiveHealthPanel } from '@/components/gallery/ArchiveHealthPanel';
 import { TrashPanel } from '@/components/gallery/TrashPanel';
+import { ToolDialog } from '@/components/gallery/ToolDialog';
 import { CollectionPanel } from '@/components/gallery/CollectionPanel';
 import type { CollectionSummary } from '@/components/gallery/types';
 import { ContactSheetExport } from '@/components/gallery/ContactSheetExport';
@@ -24,6 +25,14 @@ interface SessionStatus {
   idleExpiresAt?: string;
   error?: string;
 }
+
+type GalleryTool =
+  | 'archive'
+  | 'filters'
+  | 'collections'
+  | 'health'
+  | 'trash'
+  | 'notifications';
 
 const EMPTY_FILTERS: GalleryFilters = { q: '', from: '', to: '', tag: '' };
 
@@ -78,6 +87,14 @@ export default function HomePage() {
   const [quota, setQuota] = useState<StorageQuotaInfo | null>(null);
 
   // Modal state
+  const [activeTool, setActiveTool] = useState<GalleryTool | null>(null);
+  const [toolReturnTarget, setToolReturnTarget] = useState<HTMLElement | null>(null);
+  const [contactSheetFocusRequest, setContactSheetFocusRequest] = useState(0);
+  const archiveToolsButtonRef = useRef<HTMLButtonElement>(null);
+  const filtersButtonRef = useRef<HTMLButtonElement>(null);
+  const collectionsButtonRef = useRef<HTMLButtonElement>(null);
+  const suppressArchiveFocusRestore = useRef(false);
+  const detailReturnTarget = useRef<HTMLElement | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedSnapshot, setSelectedSnapshot] = useState<AchievementItem | null>(null);
@@ -121,6 +138,32 @@ export default function HomePage() {
     setRestoreRequest(null);
   }, [invalidateNavigation]);
 
+  const closeDetailWithReturn = useCallback(() => {
+    const target = detailReturnTarget.current;
+    detailReturnTarget.current = null;
+    closeDetail();
+    if (!target) return;
+
+    requestAnimationFrame(() => {
+      if (!target.isConnected || !target.getClientRects().length) return;
+      if (document.querySelector('dialog[open]')) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      target.focus({ preventScroll: true });
+    });
+  }, [closeDetail]);
+
+  const openTool = useCallback((tool: GalleryTool, returnTarget: HTMLElement | null) => {
+    closeDetail();
+    suppressArchiveFocusRestore.current = false;
+    setToolReturnTarget(returnTarget);
+    setActiveTool(tool);
+  }, [closeDetail]);
+
+  const closeTool = useCallback(() => {
+    invalidateNavigation();
+    setActiveTool(null);
+  }, [invalidateNavigation]);
+
   const closeViewer = useCallback(() => {
     invalidateNavigation();
     setIsViewerOpen(false);
@@ -153,9 +196,25 @@ export default function HomePage() {
     });
   }, [items]);
 
+  const startContactSheet = useCallback(() => {
+    suppressArchiveFocusRestore.current = true;
+    closeTool();
+    resetContactSheetSelection();
+    setContactSheetMode(true);
+    setContactSheetFocusRequest((request) => request + 1);
+  }, [closeTool, resetContactSheetSelection]);
+
+  const exitContactSheet = useCallback(() => {
+    resetContactSheetSelection();
+    setContactSheetMode(false);
+  }, [resetContactSheetSelection]);
+
   const handleSessionExpired = useCallback(() => {
     requestGeneration.current++;
     tagRequestGeneration.current++;
+    setActiveTool(null);
+    setToolReturnTarget(null);
+    suppressArchiveFocusRestore.current = false;
     setSession({ authenticated: false });
     setGalleryLoading(false);
     setTagLoading(false);
@@ -175,6 +234,7 @@ export default function HomePage() {
   const selectForDetail = useCallback(
     (item: AchievementItem) => {
       invalidateNavigation();
+      detailReturnTarget.current = null;
       setSelectedId(item.id);
       setSelectedSnapshot(item);
       setIsViewerOpen(false);
@@ -186,6 +246,7 @@ export default function HomePage() {
   const selectForViewer = useCallback(
     (item: AchievementItem) => {
       invalidateNavigation();
+      detailReturnTarget.current = null;
       setSelectedId(item.id);
       setSelectedSnapshot(item);
       setRestoreRequest(null);
@@ -195,9 +256,15 @@ export default function HomePage() {
 
   const openRestoreRequest = useCallback(
     async (request: RestoreRequest) => {
+      invalidateNavigation();
+      const navigation = navigationGeneration.current;
+      const generation = requestGeneration.current;
+      const isCurrent = () =>
+        navigation === navigationGeneration.current && generation === requestGeneration.current;
       const loaded = items.find((item) => item.id === request.achievementId);
       if (loaded) {
-        invalidateNavigation();
+        detailReturnTarget.current = archiveToolsButtonRef.current;
+        setActiveTool(null);
         setSelectedId(loaded.id);
         setSelectedSnapshot(loaded);
         setIsViewerOpen(false);
@@ -205,14 +272,15 @@ export default function HomePage() {
         return;
       }
 
-      const generation = requestGeneration.current;
       let response: Response;
       try {
         response = await fetch(`/api/achievements/${request.achievementId}`);
       } catch {
+        if (!isCurrent()) return;
         throw new Error('Could not open this artwork. Please retry.');
       }
 
+      if (!isCurrent()) return;
       if (response.status === 401) {
         handleSessionExpired();
         throw new Error('Your session expired. Unlock the archive and check again.');
@@ -221,10 +289,17 @@ export default function HomePage() {
         throw new Error('Could not open this artwork. Please retry.');
       }
 
-      const item = (await response.json()) as AchievementItem;
-      if (generation !== requestGeneration.current) return;
+      let item: AchievementItem;
+      try {
+        item = (await response.json()) as AchievementItem;
+      } catch {
+        if (!isCurrent()) return;
+        throw new Error('Could not open this artwork. Please retry.');
+      }
+      if (!isCurrent()) return;
 
-      invalidateNavigation();
+      detailReturnTarget.current = archiveToolsButtonRef.current;
+      setActiveTool(null);
       setSelectedId(item.id);
       setSelectedSnapshot(item);
       setIsViewerOpen(false);
@@ -268,7 +343,8 @@ export default function HomePage() {
   const fetchAchievements = useCallback(
     async (
       active: GalleryFilters,
-      pageCursor: string | null = null
+      pageCursor: string | null = null,
+      options: { preserveItems?: boolean } = {}
     ): Promise<GalleryRequestResult> => {
       const collection = collectionRef.current;
       const appendKey = pageCursor
@@ -285,7 +361,9 @@ export default function HomePage() {
       setGalleryError(null);
       setFailedCursor(null);
       if (!pageCursor) {
-        setItems([]);
+        // A background refresh (edit or revision bump) keeps the mounted cards so
+        // focus can return to the artwork the owner was viewing.
+        if (!options.preserveItems) setItems([]);
         setCursor(null);
         setHasMore(false);
       }
@@ -570,6 +648,7 @@ export default function HomePage() {
 
   // Handle Logout
   const handleLogout = async () => {
+    closeTool();
     try {
       await fetch('/api/session', {
         method: 'DELETE',
@@ -606,7 +685,7 @@ export default function HomePage() {
     } else {
       setSelectedSnapshot(updated);
     }
-    void fetchAchievements(filters);
+    void fetchAchievements(filters, null, { preserveItems: true });
     void fetchTags(filters);
   };
 
@@ -763,130 +842,235 @@ export default function HomePage() {
   const usagePercent = quota && quota.ceilingBytes > 0
     ? Math.round((quota.totalAccountedBytes / quota.ceilingBytes) * 100)
     : 0;
+  const storageWarning = usagePercent > 80;
+  const hasAppliedScope = Boolean(
+    selectedCollection || filters.from || filters.to || filters.tag
+  );
+  const dateScope = filters.from && filters.to
+    ? `${filters.from} to ${filters.to}`
+    : filters.from
+      ? `From ${filters.from}`
+      : `Through ${filters.to}`;
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f8fafc', color: '#0f172a' }}>
-      {/* Top Application Header */}
-      <header
-        style={{
-          backgroundColor: '#fff',
-          borderBottom: '1px solid #e2e8f0',
-          position: 'sticky',
-          top: 0,
-          zIndex: 100,
-          boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)',
-        }}
-      >
-        <div
-          style={{
-            maxWidth: 1200,
-            margin: '0 auto',
-            padding: '14px 20px',
-            display: 'flex',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 16,
-          }}
-        >
-          {/* Logo / Title */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: '24px' }}>🎨</span>
-            <div>
-              <h1 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: '#0f172a' }}>
-                Hall of Achievements
-              </h1>
-              <span style={{ fontSize: '12px', color: '#64748b' }}>Private Art Archive</span>
-            </div>
+    <div className="gallery-page">
+      <header className="gallery-header">
+        <div className="gallery-shell gallery-header-inner">
+          <div className="gallery-brand">
+            <h1>Hall of Achievements</h1>
+            <p>Private art archive</p>
           </div>
-
-          {/* Controls: Quota, Add button, Logout */}
-          <nav aria-label="Archive actions" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            {/* Storage Quota Badge */}
-            {quota && (
-              <div
-                role="status"
-                title={`Accounted: ${usageMb} MB of ${ceilingMb} MB (70% safe provider ceiling)`}
-                style={{
-                  fontSize: '12px',
-                  padding: '5px 10px',
-                  borderRadius: 16,
-                  backgroundColor: usagePercent > 80 ? '#fef3c7' : '#f1f5f9',
-                  color: usagePercent > 80 ? '#92400e' : '#475569',
-                  border: '1px solid #e2e8f0',
-                  fontWeight: 500,
-                }}
-              >
-                Storage: {usageMb} / {ceilingMb} MB ({usagePercent}%)
-              </div>
-            )}
-
+          <nav aria-label="Archive actions" className="gallery-header-actions">
             <button
               type="button"
+              className="gallery-button gallery-button-primary"
+              aria-haspopup="dialog"
               onClick={() => setIsAddModalOpen(true)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '10px 16px',
-                minHeight: 44,
-                backgroundColor: '#2563eb',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 6,
-                fontWeight: 600,
-                fontSize: '14px',
-                cursor: 'pointer',
-              }}
             >
-              <span>+</span> Add Achievement
+              <span aria-hidden="true">+</span> Add artwork
             </button>
-
             <button
+              ref={archiveToolsButtonRef}
               type="button"
-              onClick={() => void handleLogout()}
-              style={{
-                padding: '10px 14px',
-                minHeight: 44,
-                backgroundColor: '#fff',
-                color: '#475569',
-                border: '1px solid #cbd5e1',
-                borderRadius: 6,
-                fontWeight: 500,
-                fontSize: '13px',
-                cursor: 'pointer',
-              }}
+              className="gallery-button gallery-button-quiet"
+              aria-haspopup="dialog"
+              onClick={() => openTool('archive', archiveToolsButtonRef.current)}
             >
-              Log Out
+              Archive tools
+              {storageWarning && (
+                <span className="gallery-tools-warning">Storage {usagePercent}% full</span>
+              )}
             </button>
           </nav>
         </div>
       </header>
 
-      {/* Main Gallery Area */}
-      <main style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 20px 60px' }}>
-        {/* Web Push Notification Controls (M3) */}
-        <NotificationPanel />
+      <main className="gallery-shell gallery-main">
+        <div className="gallery-collection-header">
+          <h2>Your collection</h2>
+          <p role="status" aria-live="polite" className="gallery-collection-count">
+            {galleryError
+              ? 'Could not load artwork'
+              : galleryLoading && items.length === 0
+                ? 'Loading artwork...'
+                : `${items.length} ${items.length === 1 ? 'artwork' : 'artworks'} loaded${
+                    selectedCollection ? ` in "${selectedCollection.name}"` : ''
+                  }`}
+          </p>
+        </div>
 
-        {/* Search & Filter Bar */}
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            alignItems: 'flex-end',
-            justifyContent: 'space-between',
-            gap: 16,
-            marginBottom: 12,
-          }}
-        >
-          <SearchBar onSearch={handleSearch} />
+        <div className="gallery-toolbar">
+          <div className="gallery-search"><SearchBar onSearch={handleSearch} /></div>
+          <nav aria-label="Gallery tools" className="gallery-toolbar-actions">
+            <button
+              ref={filtersButtonRef}
+              type="button"
+              className="gallery-button"
+              aria-haspopup="dialog"
+              onClick={() => openTool('filters', filtersButtonRef.current)}
+            >
+              Filters
+            </button>
+            <button
+              ref={collectionsButtonRef}
+              type="button"
+              className="gallery-button"
+              aria-haspopup="dialog"
+              onClick={() => openTool('collections', collectionsButtonRef.current)}
+            >
+              Collections
+            </button>
+          </nav>
+        </div>
 
-          <form
-            onSubmit={handleApplyDates}
-            aria-label="Filter by completion date"
-            style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'end', gap: 12 }}
-          >
-            <label htmlFor="completed-from" style={{ fontSize: '14px', color: '#334155', fontWeight: 500 }}>
+        {hasAppliedScope && (
+          <div className="gallery-scope" aria-label="Applied gallery scope">
+            {selectedCollection && (
+              <span>Collection <strong>{selectedCollection.name}</strong></span>
+            )}
+            {(filters.from || filters.to) && (
+              <span>Dates <strong>{dateScope}</strong></span>
+            )}
+            {filters.tag && <span>Tag <strong>#{filters.tag}</strong></span>}
+          </div>
+        )}
+
+        <div className="gallery-results">
+          {contactSheetMode && (
+            <ContactSheetExport
+              selectedItems={contactSheetItems}
+              loadedCount={items.length}
+              scopeKey={String(contactSheetScope)}
+              focusRequest={contactSheetFocusRequest}
+              onSelectLoaded={selectLoadedForContactSheet}
+              onClear={resetContactSheetSelection}
+              onExit={exitContactSheet}
+              onSessionExpired={handleSessionExpired}
+            />
+          )}
+
+          {galleryError && (
+            <div role="alert" className="gallery-error">
+              <p>{galleryError}</p>
+              <button
+                type="button"
+                className="gallery-button"
+                disabled={galleryLoading}
+                onClick={() => void fetchAchievements(filters, failedCursor)}
+              >
+                Retry loading artwork
+              </button>
+            </div>
+          )}
+
+          {(!galleryError || items.length > 0) && (
+            <GalleryGrid
+              items={items}
+              loading={galleryLoading}
+              hasMore={hasMore && !galleryError}
+              hasActiveFilters={Boolean(filters.q || filters.from || filters.to || filters.tag)}
+              onLoadMore={() => void handleLoadMore()}
+              onSelectAchievement={selectForDetail}
+              onOpenAddModal={() => setIsAddModalOpen(true)}
+              selectionMode={contactSheetMode}
+              selectedIds={contactSheetSelection}
+              onToggleSelection={toggleContactSheetSelection}
+            />
+          )}
+        </div>
+      </main>
+
+      <ToolDialog
+        open={activeTool === 'archive'}
+        label="Archive tools"
+        onClose={closeTool}
+        returnFocus={toolReturnTarget}
+        shouldRestoreFocus={() => !suppressArchiveFocusRestore.current}
+      >
+        <div className="gallery-archive-tools">
+          <div className="gallery-storage-summary">
+            <div>
+              <p className="gallery-storage-label">Storage</p>
+              <p className="gallery-storage-value">{usageMb} MB of {ceilingMb} MB</p>
+            </div>
+            <span className="gallery-storage-percent">{usagePercent}%</span>
+          </div>
+          <p className="gallery-storage-note">
+            Accounted against the 70% safe provider ceiling.
+          </p>
+          {storageWarning && (
+            <p role="status" className="gallery-storage-warning">
+              Storage is at {usagePercent}% of the safe ceiling. Remove artwork or export a
+              backup before adding more.
+            </p>
+          )}
+
+          <div className="gallery-tool-list">
+            <button
+              type="button"
+              className="gallery-tool-entry"
+              aria-haspopup="dialog"
+              onClick={() => openTool('health', archiveToolsButtonRef.current)}
+            >
+              <span className="gallery-tool-entry-label">Archive health</span>
+              <span className="gallery-tool-entry-detail">
+                Check stored files, metadata, and missing previews.
+              </span>
+            </button>
+            <button
+              type="button"
+              className="gallery-tool-entry"
+              aria-haspopup="dialog"
+              onClick={() => openTool('trash', archiveToolsButtonRef.current)}
+            >
+              <span className="gallery-tool-entry-label">Trash</span>
+              <span className="gallery-tool-entry-detail">
+                Review deleted artwork before purging it.
+              </span>
+            </button>
+            <button
+              type="button"
+              className="gallery-tool-entry"
+              aria-haspopup="dialog"
+              onClick={() => openTool('notifications', archiveToolsButtonRef.current)}
+            >
+              <span className="gallery-tool-entry-label">Notifications</span>
+              <span className="gallery-tool-entry-detail">
+                Manage push alerts and delivery tests.
+              </span>
+            </button>
+            <button
+              type="button"
+              className="gallery-tool-entry"
+              onClick={startContactSheet}
+              disabled={items.length === 0}
+            >
+              <span className="gallery-tool-entry-label">Select for contact sheet</span>
+              <span className="gallery-tool-entry-detail">
+                Choose up to 24 loaded artworks and export a PNG.
+              </span>
+            </button>
+          </div>
+
+          <div className="gallery-tools-footer">
+            <button type="button" className="gallery-button gallery-button-quiet" onClick={() => void handleLogout()}>
+              Log out
+            </button>
+          </div>
+        </div>
+      </ToolDialog>
+
+      <ToolDialog
+        open={activeTool === 'filters'}
+        label="Filters"
+        onClose={closeTool}
+        returnFocus={toolReturnTarget}
+      >
+        <section className="gallery-filters" aria-labelledby="gallery-filters-heading">
+          <h2 id="gallery-filters-heading">Filter artwork</h2>
+          <p>Choose completion dates and a tag to narrow the gallery.</p>
+          <form onSubmit={handleApplyDates} aria-label="Filter by completion date" className="gallery-date-form">
+            <label htmlFor="completed-from">
               Completed from
               <input
                 id="completed-from"
@@ -895,20 +1079,9 @@ export default function HomePage() {
                 onChange={(event) => setDraftFrom(event.target.value)}
                 aria-invalid={Boolean(dateError)}
                 aria-describedby={dateError ? 'date-range-error' : undefined}
-                style={{
-                  display: 'block',
-                  minHeight: 44,
-                  marginTop: 4,
-                  padding: '8px 10px',
-                  borderRadius: 6,
-                  border: '1px solid #cbd5e1',
-                  fontSize: '14px',
-                  color: '#1e293b',
-                  backgroundColor: '#fff',
-                }}
               />
             </label>
-            <label htmlFor="completed-through" style={{ fontSize: '14px', color: '#334155', fontWeight: 500 }}>
+            <label htmlFor="completed-through">
               Completed through
               <input
                 id="completed-through"
@@ -917,211 +1090,68 @@ export default function HomePage() {
                 onChange={(event) => setDraftTo(event.target.value)}
                 aria-invalid={Boolean(dateError)}
                 aria-describedby={dateError ? 'date-range-error' : undefined}
-                style={{
-                  display: 'block',
-                  minHeight: 44,
-                  marginTop: 4,
-                  padding: '8px 10px',
-                  borderRadius: 6,
-                  border: '1px solid #cbd5e1',
-                  fontSize: '14px',
-                  color: '#1e293b',
-                  backgroundColor: '#fff',
-                }}
               />
             </label>
-            <button
-              type="submit"
-              style={{
-                minWidth: 44,
-                minHeight: 44,
-                padding: '10px 16px',
-                backgroundColor: '#2563eb',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 6,
-                fontWeight: 600,
-                fontSize: '14px',
-                cursor: 'pointer',
-              }}
-            >
-              Apply dates
-            </button>
-            <button
-              type="button"
-              onClick={handleClearDates}
-              style={{
-                minWidth: 44,
-                minHeight: 44,
-                padding: '10px 14px',
-                backgroundColor: '#fff',
-                color: '#475569',
-                border: '1px solid #cbd5e1',
-                borderRadius: 6,
-                fontWeight: 500,
-                fontSize: '14px',
-                cursor: 'pointer',
-              }}
-            >
-              Clear dates
-            </button>
-            {dateError && (
-              <p id="date-range-error" role="alert" style={{ margin: 0, color: '#991b1b', fontSize: '14px' }}>
-                {dateError}
-              </p>
-            )}
+            <button type="submit" className="gallery-button gallery-button-primary">Apply dates</button>
+            <button type="button" className="gallery-button" onClick={handleClearDates}>Clear dates</button>
+            {dateError && <p id="date-range-error" role="alert" className="gallery-date-error">{dateError}</p>}
           </form>
-        </div>
-
-        <TagBrowser
-          tags={tags}
-          selectedTag={filters.tag}
-          loading={tagLoading}
-          error={tagError}
-          onSelect={handleSelectTag}
-          onRetry={() => void fetchTags(filters)}
-        />
-
+          <TagBrowser
+            tags={tags}
+            selectedTag={filters.tag}
+            loading={tagLoading}
+            error={tagError}
+            onSelect={handleSelectTag}
+            onRetry={() => void fetchTags(filters)}
+          />
+        </section>
+      </ToolDialog>
+      <ToolDialog
+        open={activeTool === 'collections'}
+        label="Collections"
+        onClose={closeTool}
+        returnFocus={toolReturnTarget}
+      >
         <CollectionPanel
           selectedCollectionId={selectedCollection?.id ?? null}
           revision={archiveRevision}
-          onSelect={applyCollection}
+          onSelect={(collection) => {
+            applyCollection(collection);
+            closeTool();
+          }}
           onChanged={handleCollectionsChanged}
           onSessionExpired={handleSessionExpired}
         />
-
+      </ToolDialog>
+      <ToolDialog
+        open={activeTool === 'health'}
+        label="Archive health"
+        onClose={closeTool}
+        returnFocus={toolReturnTarget}
+      >
         <ArchiveHealthPanel
           filters={filters}
           revision={archiveRevision}
           onOpenRestore={openRestoreRequest}
           onSessionExpired={handleSessionExpired}
         />
-
-        <TrashPanel
-          revision={archiveRevision}
-          onChanged={handleTrashChanged}
-          onSessionExpired={handleSessionExpired}
-        />
-
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 12,
-            margin: '0 0 20px 0',
-          }}
-        >
-          <p
-            role="status"
-            aria-live="polite"
-            style={{ margin: 0, fontSize: '14px', color: '#64748b' }}
-          >
-            {galleryLoading
-              ? 'Loading artwork...'
-              : galleryError
-                ? ''
-                : `${items.length} ${items.length === 1 ? 'artwork' : 'artworks'} loaded${
-                    selectedCollection ? ` in "${selectedCollection.name}"` : ''
-                  }`}
-          </p>
-
-          {!contactSheetMode && (
-            <button
-              type="button"
-              onClick={() => {
-                setContactSheetSelection([]);
-                setContactSheetScope((generation) => generation + 1);
-                setContactSheetMode(true);
-              }}
-              disabled={items.length === 0}
-              style={{
-                minHeight: 44,
-                minWidth: 44,
-                padding: '9px 16px',
-                backgroundColor: '#fff',
-                color: '#1e293b',
-                border: '1px solid #cbd5e1',
-                borderRadius: 6,
-                fontWeight: 600,
-                fontSize: 14,
-                cursor: items.length === 0 ? 'not-allowed' : 'pointer',
-                opacity: items.length === 0 ? 0.6 : 1,
-              }}
-            >
-              Select for contact sheet
-            </button>
-          )}
-        </div>
-
-        {contactSheetMode && (
-          <ContactSheetExport
-            selectedItems={contactSheetItems}
-            loadedCount={items.length}
-            scopeKey={String(contactSheetScope)}
-            onSelectLoaded={selectLoadedForContactSheet}
-            onClear={resetContactSheetSelection}
-            onExit={() => {
-              resetContactSheetSelection();
-              setContactSheetMode(false);
-            }}
-            onSessionExpired={handleSessionExpired}
-          />
-        )}
-
-        {galleryError && (
-          <div
-            role="alert"
-            style={{
-              marginBottom: 20,
-              padding: 14,
-              borderRadius: 8,
-              backgroundColor: '#fef2f2',
-              border: '1px solid #fecaca',
-              color: '#991b1b',
-            }}
-          >
-            <p style={{ margin: '0 0 10px 0', fontSize: '14px' }}>{galleryError}</p>
-            <button
-              type="button"
-              disabled={galleryLoading}
-              onClick={() => void fetchAchievements(filters, failedCursor)}
-              style={{
-                minWidth: 44,
-                minHeight: 44,
-                padding: '10px 16px',
-                backgroundColor: '#fff',
-                color: '#991b1b',
-                border: '1px solid #fca5a5',
-                borderRadius: 6,
-                fontWeight: 600,
-                fontSize: '14px',
-                cursor: galleryLoading ? 'not-allowed' : 'pointer',
-                opacity: galleryLoading ? 0.7 : 1,
-              }}
-            >
-              Retry loading artwork
-            </button>
-          </div>
-        )}
-
-        {/* Gallery Grid */}
-        {(!galleryError || items.length > 0) && (
-          <GalleryGrid
-            items={items}
-            loading={galleryLoading}
-            hasMore={hasMore && !galleryError}
-            hasActiveFilters={Boolean(filters.q || filters.from || filters.to || filters.tag)}
-            onLoadMore={() => void handleLoadMore()}
-            onSelectAchievement={selectForDetail}
-            onOpenAddModal={() => setIsAddModalOpen(true)}
-            selectionMode={contactSheetMode}
-            selectedIds={contactSheetSelection}
-            onToggleSelection={toggleContactSheetSelection}
-          />
-        )}
-      </main>
+      </ToolDialog>
+      <ToolDialog
+        open={activeTool === 'trash'}
+        label="Trash"
+        onClose={closeTool}
+        returnFocus={toolReturnTarget}
+      >
+        <TrashPanel revision={archiveRevision} onChanged={handleTrashChanged} onSessionExpired={handleSessionExpired} />
+      </ToolDialog>
+      <ToolDialog
+        open={activeTool === 'notifications'}
+        label="Notifications"
+        onClose={closeTool}
+        returnFocus={toolReturnTarget}
+      >
+        <NotificationPanel />
+      </ToolDialog>
 
       {/* Modals */}
       <AddAchievementModal
@@ -1138,7 +1168,7 @@ export default function HomePage() {
         hasPrevious={hasPreviousArtwork}
         hasNext={hasNextArtwork}
         navigationPending={navigationPending}
-        onClose={closeDetail}
+        onClose={closeDetailWithReturn}
         onViewerOpen={() => setIsViewerOpen(true)}
         onViewerClose={closeViewer}
         onPrevious={goPrevious}

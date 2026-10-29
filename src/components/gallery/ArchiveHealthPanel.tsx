@@ -305,7 +305,8 @@ export function ArchiveHealthPanel({
           </h2>
           <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: '#64748b' }}>
             Check whether stored image files are still reachable. This reads object metadata
-            only; it never downloads, repairs, replaces, or deletes artwork.
+            only; it never downloads, repairs, replaces, or deletes artwork. You can close this
+            window while the check runs.
           </p>
         </div>
         <button

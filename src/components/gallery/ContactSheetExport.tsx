@@ -23,6 +23,7 @@ interface ContactSheetExportProps {
   selectedItems: AchievementItem[];
   loadedCount: number;
   scopeKey: string;
+  focusRequest?: number;
   onSelectLoaded: () => void;
   onClear: () => void;
   onExit: () => void;
@@ -71,6 +72,7 @@ export function ContactSheetExport({
   selectedItems,
   loadedCount,
   scopeKey,
+  focusRequest = 0,
   onSelectLoaded,
   onClear,
   onExit,
@@ -80,6 +82,7 @@ export function ContactSheetExport({
   const abortRef = useRef<AbortController | null>(null);
   const runRef = useRef(0);
   const aliveRef = useRef(true);
+  const selectLoadedRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -95,6 +98,10 @@ export function ContactSheetExport({
     runRef.current++;
     setStatus({ phase: 'idle' });
   }, [scopeKey]);
+
+  useEffect(() => {
+    selectLoadedRef.current?.focus();
+  }, [focusRequest]);
 
   const cancelExport = useCallback(() => {
     if (status.phase !== 'working') return;
@@ -225,140 +232,65 @@ export function ContactSheetExport({
   const selectionFull = selectedItems.length >= CONTACT_SHEET_MAX_ITEMS;
 
   return (
-    <section
-      aria-label="Contact sheet export"
-      style={{
-        border: '1px solid #cbd5e1',
-        borderRadius: 10,
-        padding: 16,
-        marginBottom: 20,
-        backgroundColor: '#fff',
-      }}
-    >
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
-        <strong style={{ fontSize: 15, color: '#0f172a' }}>
+    <section aria-label="Contact sheet export" className="gallery-contact-sheet">
+      <div className="gallery-contact-sheet-controls">
+        <strong className="gallery-contact-sheet-count">
           {selectedItems.length} of {CONTACT_SHEET_MAX_ITEMS} selected
         </strong>
 
         <button
+          ref={selectLoadedRef}
           type="button"
+          className="gallery-button"
           onClick={onSelectLoaded}
           disabled={working || selectionFull || loadedCount === 0}
-          style={{
-            minHeight: 44,
-            minWidth: 44,
-            padding: '9px 14px',
-            backgroundColor: '#fff',
-            color: '#1e293b',
-            border: '1px solid #cbd5e1',
-            borderRadius: 6,
-            fontWeight: 600,
-            fontSize: 14,
-            cursor: working || selectionFull || loadedCount === 0 ? 'not-allowed' : 'pointer',
-            opacity: working || selectionFull || loadedCount === 0 ? 0.6 : 1,
-          }}
         >
           Select loaded
         </button>
 
         <button
           type="button"
+          className="gallery-button"
           onClick={onClear}
           disabled={working || selectedItems.length === 0}
-          style={{
-            minHeight: 44,
-            minWidth: 44,
-            padding: '9px 14px',
-            backgroundColor: '#fff',
-            color: '#475569',
-            border: '1px solid #cbd5e1',
-            borderRadius: 6,
-            fontWeight: 500,
-            fontSize: 14,
-            cursor: working || selectedItems.length === 0 ? 'not-allowed' : 'pointer',
-            opacity: working || selectedItems.length === 0 ? 0.6 : 1,
-          }}
         >
           Clear selection
         </button>
 
         <button
           type="button"
+          className="gallery-button gallery-button-primary"
           onClick={() => void startExport()}
           disabled={working || selectedItems.length === 0}
-          style={{
-            minHeight: 44,
-            minWidth: 44,
-            padding: '9px 18px',
-            backgroundColor: '#2563eb',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 6,
-            fontWeight: 600,
-            fontSize: 14,
-            cursor: working || selectedItems.length === 0 ? 'not-allowed' : 'pointer',
-            opacity: working || selectedItems.length === 0 ? 0.6 : 1,
-          }}
         >
           Export PNG
         </button>
 
         {working ? (
-          <button
-            type="button"
-            onClick={cancelExport}
-            style={{
-              minHeight: 44,
-              minWidth: 44,
-              padding: '9px 14px',
-              backgroundColor: '#fff',
-              color: '#991b1b',
-              border: '1px solid #fca5a5',
-              borderRadius: 6,
-              fontWeight: 600,
-              fontSize: 14,
-              cursor: 'pointer',
-            }}
-          >
+          <button type="button" className="gallery-button gallery-button-danger" onClick={cancelExport}>
             Cancel export
           </button>
         ) : (
-          <button
-            type="button"
-            onClick={onExit}
-            style={{
-              minHeight: 44,
-              minWidth: 44,
-              padding: '9px 14px',
-              backgroundColor: '#fff',
-              color: '#475569',
-              border: '1px solid #cbd5e1',
-              borderRadius: 6,
-              fontWeight: 500,
-              fontSize: 14,
-              cursor: 'pointer',
-            }}
-          >
+          <button type="button" className="gallery-button gallery-button-quiet" onClick={onExit}>
             Exit selection
           </button>
         )}
       </div>
 
-      <p style={{ margin: '10px 0 0', fontSize: 13, color: '#475569' }}>
+      <p className="gallery-contact-sheet-note">
         Select loaded includes only the {loadedCount} {loadedCount === 1 ? 'artwork' : 'artworks'}{' '}
         currently loaded in this view, up to {CONTACT_SHEET_MAX_ITEMS}. Artworks on unseen pages are
         never added. Images appear in the order you select them.
       </p>
 
       {working && (
-        <div style={{ marginTop: 10 }}>
+        <div className="gallery-contact-sheet-progress">
           <progress
             aria-label="Contact sheet export progress"
             value={status.completed}
             max={status.total}
-            style={{ width: '100%', height: 10 }}
           />
-          <p role="status" aria-live="polite" style={{ margin: '6px 0 0', fontSize: 13, color: '#475569' }}>
+          <p role="status" aria-live="polite">
             Preparing image {Math.min(status.completed + 1, status.total)} of {status.total}...
           </p>
         </div>
@@ -370,30 +302,8 @@ export function ContactSheetExport({
         <p
           role={status.phase === 'error' ? 'alert' : 'status'}
           aria-live="polite"
-          style={{
-            margin: '10px 0 0',
-            padding: 10,
-            borderRadius: 6,
-            fontSize: 13,
-            backgroundColor:
-              status.phase === 'error'
-                ? '#fef2f2'
-                : status.phase === 'success'
-                  ? '#f0fdf4'
-                  : '#f8fafc',
-            color:
-              status.phase === 'error'
-                ? '#991b1b'
-                : status.phase === 'success'
-                  ? '#166534'
-                  : '#475569',
-            border:
-              status.phase === 'error'
-                ? '1px solid #fecaca'
-                : status.phase === 'success'
-                  ? '1px solid #bbf7d0'
-                  : '1px solid #e2e8f0',
-          }}
+          className="gallery-contact-sheet-status"
+          data-phase={status.phase}
         >
           {status.message}
         </p>

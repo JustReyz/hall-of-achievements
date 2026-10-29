@@ -302,6 +302,8 @@ export function AchievementDetailModal({
   }, [viewerOpen]);
 
   useEffect(() => {
+    if (!achievement) return;
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -359,7 +361,7 @@ export function AchievementDetailModal({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [viewerOpen, hasPrevious, hasNext, onClose, onViewerClose, onPrevious, onNext]);
+  }, [achievement, viewerOpen, hasPrevious, hasNext, onClose, onViewerClose, onPrevious, onNext]);
 
   if (!achievement) return null;
 

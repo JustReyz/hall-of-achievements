@@ -69,38 +69,15 @@ export function GalleryCard({
   }, [achievement.id, achievement.updatedAt]);
 
   return (
-    <div
-      style={{
-        position: 'relative',
-        outline: selected ? '3px solid #2563eb' : 'none',
-        outlineOffset: 2,
-        borderRadius: 8,
-      }}
-    >
+    <div className="gallery-card" data-selected={selected ? 'true' : 'false'}>
       {selectable && (
         <label
+          className="gallery-card-select"
           title={
             selectionDisabled
               ? 'A contact sheet can include up to 24 artworks.'
               : `Select ${achievement.title} for the contact sheet`
           }
-          style={{
-            position: 'absolute',
-            top: 8,
-            left: 8,
-            zIndex: 2,
-            minWidth: 44,
-            minHeight: 44,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: 'rgba(255, 255, 255, 0.95)',
-            border: '1px solid #cbd5e1',
-            borderRadius: 8,
-            boxShadow: '0 1px 3px rgba(15, 23, 42, 0.18)',
-            cursor: selectionDisabled ? 'not-allowed' : 'pointer',
-            opacity: selectionDisabled ? 0.55 : 1,
-          }}
         >
           <input
             type="checkbox"
@@ -108,16 +85,12 @@ export function GalleryCard({
             disabled={selectionDisabled}
             onChange={() => onToggleSelection?.(achievement)}
             aria-label={`Select ${achievement.title} for the contact sheet`}
-            style={{
-              width: 20,
-              height: 20,
-              cursor: selectionDisabled ? 'not-allowed' : 'pointer',
-            }}
           />
         </label>
       )}
 
       <article
+        className="gallery-card-trigger"
         tabIndex={0}
         role="button"
         aria-label={`View achievement: ${achievement.title}, completed ${achievement.completionDate}`}
@@ -128,67 +101,16 @@ export function GalleryCard({
             onClick(achievement);
           }
         }}
-        style={{
-          backgroundColor: '#fff',
-          borderRadius: 8,
-          border: '1px solid #e2e8f0',
-          overflow: 'hidden',
-          cursor: 'pointer',
-          display: 'flex',
-          flexDirection: 'column',
-          transition: 'transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease',
-          outline: 'none',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.transform = 'translateY(-2px)';
-          e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0, 0, 0, 0.08)';
-          e.currentTarget.style.borderColor = '#cbd5e1';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = 'none';
-          e.currentTarget.style.boxShadow = 'none';
-          e.currentTarget.style.borderColor = '#e2e8f0';
-        }}
-        onFocus={(e) => {
-          e.currentTarget.style.borderColor = '#2563eb';
-          e.currentTarget.style.boxShadow = '0 0 0 3px rgba(37, 99, 235, 0.25)';
-        }}
-        onBlur={(e) => {
-          e.currentTarget.style.borderColor = '#e2e8f0';
-          e.currentTarget.style.boxShadow = 'none';
-        }}
       >
-        {/* Thumbnail Aspect Ratio Box */}
-        <div
-          style={{
-            width: '100%',
-            aspectRatio: '4 / 3',
-            backgroundColor: '#f1f5f9',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            overflow: 'hidden',
-            position: 'relative',
-          }}
-        >
+        <div className="gallery-card-media">
           {imageLoading && (
-            <div
-              style={{
-                position: 'absolute',
-                inset: 0,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: '#64748b',
-                fontSize: '13px',
-                backgroundColor: '#f1f5f9',
-              }}
-            >
-              Loading...
+            <div className="gallery-card-state" aria-hidden="true">
+              Loading preview...
             </div>
           )}
           {thumbUrl && !imageFailed && (
             <img
+              className="gallery-card-image"
               src={thumbUrl}
               alt=""
               aria-hidden="true"
@@ -205,85 +127,24 @@ export function GalleryCard({
                 setImageLoading(false);
               }}
               style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
                 objectPosition: `${thumbnailPositionX * 100}% ${thumbnailPositionY * 100}%`,
                 opacity: imageLoading ? 0 : 1,
-                transition: 'opacity 0.2s ease',
               }}
             />
           )}
           {!imageLoading && (imageFailed || !thumbUrl) && (
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                color: '#64748b',
-                fontSize: '12px',
-                textAlign: 'center',
-                padding: '0 16px',
-              }}
-            >
-              <span aria-hidden="true" style={{ fontSize: '28px' }}>
-                🖼️
-              </span>
-              <span>Preview unavailable</span>
-              <span style={{ fontSize: '11px', color: '#94a3b8' }}>
-                Open to restore the image
-              </span>
+            <div className="gallery-card-state">
+              <span className="gallery-card-state-title">Preview unavailable</span>
+              <span>Open to restore the image</span>
             </div>
           )}
         </div>
 
-        {/* Card Body */}
-        <div style={{ padding: '14px', display: 'flex', flexDirection: 'column', flex: 1 }}>
-          <h3
-            style={{
-              margin: '0 0 6px 0',
-              fontSize: '16px',
-              fontWeight: 600,
-              color: '#0f172a',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {achievement.title}
-          </h3>
-
-          <div style={{ fontSize: '13px', color: '#475569', marginBottom: 10 }}>
+        <div className="gallery-card-caption">
+          <h3 className="gallery-card-title">{achievement.title}</h3>
+          <time className="gallery-card-date" dateTime={achievement.completionDate}>
             {achievement.completionDate}
-          </div>
-
-          {/* Tags preview */}
-          {achievement.tags && achievement.tags.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 'auto' }}>
-              {achievement.tags.slice(0, 3).map((tag) => (
-                <span
-                  key={tag}
-                  style={{
-                    fontSize: '11px',
-                    backgroundColor: '#f1f5f9',
-                    color: '#475569',
-                    padding: '2px 6px',
-                    borderRadius: 4,
-                    fontWeight: 500,
-                  }}
-                >
-                  #{tag}
-                </span>
-              ))}
-              {achievement.tags.length > 3 && (
-                <span style={{ fontSize: '11px', color: '#475569', alignSelf: 'center' }}>
-                  +{achievement.tags.length - 3}
-                </span>
-              )}
-            </div>
-          )}
+          </time>
         </div>
       </article>
     </div>

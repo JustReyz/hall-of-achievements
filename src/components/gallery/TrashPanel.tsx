@@ -16,7 +16,6 @@ export function TrashPanel({ revision, onChanged, onSessionExpired }: TrashPanel
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
 
   const load = useCallback(
     async (cursor: string | null = null) => {
@@ -139,30 +138,9 @@ export function TrashPanel({ revision, onChanged, onSessionExpired }: TrashPanel
             permanently to free the space.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setOpen((value) => !value)}
-          aria-expanded={open}
-          aria-controls="trash-list"
-          style={{
-            minHeight: 44,
-            minWidth: 44,
-            padding: '9px 16px',
-            backgroundColor: '#fff',
-            color: '#334155',
-            border: '1px solid #cbd5e1',
-            borderRadius: 6,
-            fontWeight: 600,
-            fontSize: 14,
-            cursor: 'pointer',
-          }}
-        >
-          {open ? 'Hide Trash' : `Show Trash${items.length > 0 ? ` (${items.length})` : ''}`}
-        </button>
       </div>
 
-      {open && (
-        <div id="trash-list" style={{ marginTop: 14 }}>
+      <div id="trash-list" style={{ marginTop: 14 }}>
           {loading && items.length === 0 && (
             <p role="status" style={{ margin: 0, fontSize: 13, color: '#475569' }}>
               Loading Trash…
@@ -280,8 +258,7 @@ export function TrashPanel({ revision, onChanged, onSessionExpired }: TrashPanel
               Load more Trash
             </button>
           )}
-        </div>
-      )}
+      </div>
     </section>
   );
 }

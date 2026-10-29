@@ -35,7 +35,6 @@ export function CollectionPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
 
   const loadCollections = useCallback(async () => {
     setLoading(true);
@@ -252,19 +251,9 @@ export function CollectionPanel({
             removes artwork. A collection holds up to 200 works.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setOpen((value) => !value)}
-          aria-expanded={open}
-          aria-controls="collections-panel"
-          style={{ ...buttonStyle, backgroundColor: '#fff', color: '#334155', border: '1px solid #cbd5e1' }}
-        >
-          {open ? 'Hide collections' : `Show collections${collections.length ? ` (${collections.length})` : ''}`}
-        </button>
       </div>
 
-      {open && (
-        <div id="collections-panel" style={{ marginTop: 14 }}>
+      <div id="collections-panel" style={{ marginTop: 14 }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
             <label htmlFor="collection-name-input" style={{ position: 'absolute', left: -9999 }}>
               New collection name
@@ -412,7 +401,7 @@ export function CollectionPanel({
                         </div>
                         <div style={{ fontSize: 12, color: '#64748b' }}>{item.completionDate}</div>
                       </div>
-                      <div style={{ display: 'flex', gap: 6 }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                         <button
                           type="button"
                           onClick={() => void move(index, -1)}
@@ -447,8 +436,7 @@ export function CollectionPanel({
               )}
             </div>
           )}
-        </div>
-      )}
+      </div>
     </section>
   );
 }
