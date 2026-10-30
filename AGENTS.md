@@ -11,6 +11,20 @@ Gunakan skill `poteto-mode` untuk memilih playbook jika tersedia. Alur berikut m
 5. **Deploy.** Jika proyek memakai pull request, siapkan perubahan yang mudah ditinjau. Selesaikan konflik, komentar ulasan, dan CI sebelum penggabungan yang diotorisasi. Pada pstack, tahap ini berakhir saat perubahan digabungkan; rilis, rollout, dan rollback mengikuti prosedur proyek yang terpisah.
 6. **Maintain.** Pstack belum menyediakan skill untuk pemeliharaan produk setelah rilis. Jika tugas mencakup rilis atau operasi, ikuti runbook proyek untuk memantau log, galat, dan metrik. Tangani masalah yang ditemukan, lalu bawa temuan itu kembali ke Plan. Jika akses pemantauan tidak tersedia, laporkan batas verifikasinya.
 
+## Alur branch dan pull request
+
+Branch `main` adalah jalur produksi dan `development` adalah jalur integrasi. Jangan commit atau push langsung ke keduanya untuk pekerjaan implementasi.
+
+1. Mulai dari `development` yang terbaru: `git switch development` lalu `git pull --ff-only`.
+2. Buat branch baru dengan nama yang menjelaskan perubahan, misalnya `feat/nama-fitur`, `fix/nama-perbaikan`, atau `docs/nama-dokumen`.
+3. Implementasikan dan uji perubahan pada branch tersebut.
+4. Push branch, lalu buka pull request dengan base `development`:
+   `gh pr create --base development --head <branch> --title "<judul>" --body "<ringkasan>"`
+5. Selesaikan tinjauan dan CI sebelum menggabungkan pull request ke `development`.
+6. Promosikan `development` ke `main` hanya melalui pull request terpisah `development` -> `main`, setelah pemilik proyek menyetujui.
+
+Jangan menggabungkan pull request ke `main` tanpa persetujuan pemilik proyek. Jangan menulis ulang riwayat branch bersama atau memaksa push ke `main` atau `development`.
+
 ## Anytime
 
 Gunakan skill berikut pada tahap mana pun jika tersedia dan relevan. Anytime bukan tahap ketujuh.
