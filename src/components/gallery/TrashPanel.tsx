@@ -160,7 +160,12 @@ export function TrashPanel({ revision, onChanged, onSessionExpired }: TrashPanel
           )}
 
           {notice && (
-            <p role="status" aria-live="polite" style={{ margin: '0 0 10px 0', fontSize: 13, color: '#1e3a8a' }}>
+            <p
+              role="status"
+              aria-live="polite"
+              className="gallery-status-transition"
+              style={{ margin: '0 0 10px 0', fontSize: 13, color: '#1e3a8a' }}
+            >
               {notice}
             </p>
           )}

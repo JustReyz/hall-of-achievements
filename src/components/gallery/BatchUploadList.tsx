@@ -77,6 +77,7 @@ export function BatchUploadList({ items, running, onEdit, onRetry, onRemove }: B
             key={item.id}
             data-upload-item
             data-stage={item.stage}
+            className="gallery-upload-row"
             style={{ padding: 12, border: '1px solid #e2e8f0', borderRadius: 8, backgroundColor: '#fff' }}
           >
             <div
@@ -98,6 +99,7 @@ export function BatchUploadList({ items, running, onEdit, onRetry, onRemove }: B
                 </div>
               </div>
               <span
+                className="gallery-upload-badge"
                 style={{
                   padding: '3px 8px',
                   borderRadius: 12,

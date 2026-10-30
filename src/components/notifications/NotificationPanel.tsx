@@ -495,6 +495,7 @@ export function NotificationPanel() {
       {feedback && (
         <div
           role="status"
+          className={feedback.type === 'error' ? undefined : 'gallery-status-transition'}
           style={{
             marginTop: 12,
             padding: 10,

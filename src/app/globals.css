@@ -4,6 +4,18 @@
   box-sizing: border-box;
 }
 
+:root {
+  --motion-duration-fast: 120ms;
+  --motion-duration-medium: 140ms;
+  --motion-duration-dialog: 180ms;
+  --motion-ease-out: ease-out;
+  --motion-ease-dialog: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --motion-control-transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-out),
+    border-color var(--motion-duration-fast) var(--motion-ease-out),
+    color var(--motion-duration-fast) var(--motion-ease-out);
+}
+
 body {
   margin: 0;
   padding: 0;
@@ -435,7 +447,6 @@ body {
   width: 100%;
   aspect-ratio: 4 / 3;
   background: #e9ece6;
-  animation: gallery-skeleton-pulse 1.6s ease-in-out infinite;
 }
 
 .gallery-skeleton-caption {
@@ -448,23 +459,11 @@ body {
   width: 62%;
   height: 16px;
   background: #e9ece6;
-  animation: gallery-skeleton-pulse 1.6s ease-in-out infinite;
 }
 
 .gallery-skeleton-line-short {
   width: 34%;
   height: 11px;
-}
-
-@keyframes gallery-skeleton-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-
-  50% {
-    opacity: 0.5;
-  }
 }
 
 /* Empty, error, and pagination states */
@@ -980,17 +979,114 @@ body {
   }
 }
 
+/* Restrained motion */
+
+@keyframes gallery-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes gallery-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.gallery-button,
+.gallery-search-input,
+.gallery-search-clear,
+.gallery-tag,
+.gallery-card-select,
+.gallery-date-form input,
+.gallery-tool-entry,
+.gallery-tool-dialog-body button,
+.gallery-tool-dialog-body input,
+.gallery-tool-dialog-body select,
+.gallery-tool-dialog-body textarea,
+[role='dialog'] button,
+[role='dialog'] input,
+[role='dialog'] select,
+[role='dialog'] textarea,
+[data-artwork-viewer] button,
+.gallery-upload-badge,
+.gallery-status-transition,
+.gallery-color-transition {
+  transition: var(--motion-control-transition);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .gallery-tool-dialog[open] {
+    animation: gallery-dialog-in var(--motion-duration-dialog) var(--motion-ease-dialog);
+  }
+
+  .gallery-tool-dialog[open]::backdrop {
+    animation: gallery-fade-in var(--motion-duration-medium) var(--motion-ease-out);
+  }
+
+  .gallery-login-entry,
+  .gallery-overlay-entry,
+  .gallery-viewer-entry {
+    animation: gallery-fade-in var(--motion-duration-medium) var(--motion-ease-out);
+  }
+
+  .gallery-card,
+  .gallery-upload-row,
+  .gallery-contact-sheet-controls {
+    animation: gallery-fade-in var(--motion-duration-fast) var(--motion-ease-out);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .artwork-viewer-artwork {
+  :root {
+    --motion-control-transition: none;
+  }
+
+  .gallery-tool-dialog[open],
+  .gallery-tool-dialog[open]::backdrop,
+  .gallery-login-entry,
+  .gallery-overlay-entry,
+  .gallery-viewer-entry,
+  .gallery-card,
+  .gallery-upload-row,
+  .gallery-contact-sheet-controls {
+    animation: none;
+  }
+
+  .gallery-button,
+  .gallery-search-input,
+  .gallery-search-clear,
+  .gallery-tag,
+  .gallery-card-select,
+  .gallery-date-form input,
+  .gallery-tool-entry,
+  .gallery-tool-dialog-body button,
+  .gallery-tool-dialog-body input,
+  .gallery-tool-dialog-body select,
+  .gallery-tool-dialog-body textarea,
+  [role='dialog'] button,
+  [role='dialog'] input,
+  [role='dialog'] select,
+  [role='dialog'] textarea,
+  [data-artwork-viewer] button,
+  .gallery-upload-badge,
+  .gallery-status-transition,
+  .gallery-color-transition {
     transition: none;
   }
 
+  .artwork-viewer-artwork,
   .gallery-card-image {
     transition: none;
-  }
-
-  .gallery-skeleton-media,
-  .gallery-skeleton-line {
-    animation: none;
   }
 }
