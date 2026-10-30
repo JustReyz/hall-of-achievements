@@ -553,6 +553,7 @@ export function AchievementDetailModal({
       aria-modal="true"
       aria-labelledby={viewerOpen ? undefined : 'detail-dialog-title'}
       aria-label={viewerOpen ? `Artwork viewer: ${achievement.title}` : undefined}
+      className="gallery-overlay-entry"
       style={{
         position: 'fixed',
         inset: 0,

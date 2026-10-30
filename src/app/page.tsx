@@ -754,6 +754,7 @@ export default function HomePage() {
         </div>
 
         <div
+          className="gallery-login-entry"
           style={{
             backgroundColor: '#fff',
             border: '1px solid #e2e8f0',
@@ -781,6 +782,7 @@ export default function HomePage() {
                 disabled={authLoading}
                 aria-invalid={Boolean(authMessage)}
                 aria-describedby={authMessage ? 'auth-error' : undefined}
+                className="gallery-color-transition"
                 style={{
                   width: '100%',
                   boxSizing: 'border-box',
@@ -796,6 +798,7 @@ export default function HomePage() {
             <button
               type="submit"
               disabled={authLoading}
+              className="gallery-color-transition"
               style={{
                 width: '100%',
                 padding: '11px 16px',

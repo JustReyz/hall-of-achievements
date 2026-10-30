@@ -311,6 +311,7 @@ export function ArtworkViewer({
       data-artwork-viewer=""
       role="group"
       aria-label={`Artwork viewer: ${achievement.title}`}
+      className="gallery-viewer-entry"
       style={{
         position: 'fixed',
         inset: 0,

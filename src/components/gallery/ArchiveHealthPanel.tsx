@@ -398,6 +398,7 @@ export function ArchiveHealthPanel({
       {(phase === 'cancelled' || phase === 'error') && message && (
         <p
           role={phase === 'error' ? 'alert' : 'status'}
+          className={phase === 'cancelled' ? 'gallery-status-transition' : undefined}
           style={{
             margin: '14px 0 0 0',
             padding: '10px 12px',

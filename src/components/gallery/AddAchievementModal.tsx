@@ -236,6 +236,7 @@ export function AddAchievementModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="add-achievement-title"
+      className="gallery-overlay-entry"
       style={{
         position: 'fixed',
         inset: 0,
@@ -313,6 +314,7 @@ export function AddAchievementModal({
           <div
             role="status"
             aria-live="polite"
+            className="gallery-status-transition"
             style={{
               padding: '12px 16px',
               backgroundColor: '#eff6ff',
