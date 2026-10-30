@@ -4,6 +4,8 @@ Date: 2026-10-30. Status: implemented and browser-verified. Start from `a0b52c8`
 
 Read [AGENTS.md](../../../AGENTS.md) and the [minimal layout plan](2026-10-29-minimal-gallery-layout.md). Preserve the committed layout, artwork framing, and existing interaction behavior. This file replaces the earlier gallery-only animation scope. Keep its filename so existing links continue to work.
 
+The [unsaved-changes and local-drafts plan](2026-10-30-unsaved-changes-and-local-drafts.md) defines the requested confirmation before abandoning unfinished forms. Its busy state, focus handling, and persistence results take precedence over animation. Never delay or bypass that confirmation with an exit effect.
+
 ## Deliver this result
 
 Apply one restrained motion style to authentication, gallery browsing, every dialog, artwork viewing and editing, uploads, collections, archive health, Trash, contact sheet export, and notification settings. Cover loading, success, failure, retry, and interrupted operations in each flow. Use brief, local transitions that suit the white canvas and editorial typography. Keep the same motion on desktop and mobile.
