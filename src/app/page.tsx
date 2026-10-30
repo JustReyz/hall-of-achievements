@@ -213,6 +213,7 @@ export default function HomePage() {
     requestGeneration.current++;
     tagRequestGeneration.current++;
     setActiveTool(null);
+    setIsAddModalOpen(false);
     setToolReturnTarget(null);
     suppressArchiveFocusRestore.current = false;
     setSession({ authenticated: false });
@@ -648,7 +649,11 @@ export default function HomePage() {
 
   // Handle Logout
   const handleLogout = async () => {
-    closeTool();
+    handleSessionExpired();
+    setFilters(EMPTY_FILTERS);
+    setDraftFrom('');
+    setDraftTo('');
+    setDateError(null);
     try {
       await fetch('/api/session', {
         method: 'DELETE',
@@ -659,11 +664,6 @@ export default function HomePage() {
     } catch {
       // Ignore network failures; local state still closes the archive.
     }
-    handleSessionExpired();
-    setFilters(EMPTY_FILTERS);
-    setDraftFrom('');
-    setDraftTo('');
-    setDateError(null);
   };
 
   // Callback when a new achievement is added
@@ -1182,6 +1182,7 @@ export default function HomePage() {
         restoreRequest={restoreRequest}
         onDismissRestore={() => setRestoreRequest(null)}
         onCollectionChanged={() => setArchiveRevision((revision) => revision + 1)}
+        onSessionExpired={handleSessionExpired}
       />
     </div>
   );

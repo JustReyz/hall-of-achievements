@@ -67,7 +67,7 @@ export function BatchUploadList({ items, running, onEdit, onRetry, onRemove }: B
     <ul style={{ listStyle: 'none', margin: '0 0 18px 0', padding: 0, display: 'grid', gap: 12 }}>
       {items.map((item) => {
         const tone = stageTone(item.stage);
-        const locked = item.stage === 'succeeded' || item.stage === 'uploading' || item.stage === 'finalizing';
+        const locked = running || item.stage === 'succeeded' || item.stage === 'uploading' || item.stage === 'finalizing';
         const metadataLocked = locked || item.intentId !== null;
         const canRemove = !locked;
         const canRetry = !running && (item.stage === 'queued' || item.stage === 'unknown' || item.stage === 'failed');
