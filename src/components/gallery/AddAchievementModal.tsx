@@ -3,6 +3,9 @@
 import { useState, useRef, useEffect, useCallback, type ChangeEvent } from 'react';
 import { AchievementItem } from './types';
 import { BatchUploadList } from './BatchUploadList';
+import { DraftPrivacyNotice, UnsavedChangesDialog } from './UnsavedChangesDialog';
+import { deleteDraft, DraftConflictError, loadDraft, saveUploadDraft, type UploadDraft } from '@/lib/drafts/local-drafts';
+import { useBeforeUnload } from '@/lib/drafts/use-before-unload';
 import {
   MAX_BATCH_FILES,
   createQueueItem,
@@ -26,6 +29,12 @@ function todayLocalDate(): string {
   return `${year}-${month}-${day}`;
 }
 
+function queueSnapshot(items: UploadQueueItem[]): string {
+  return JSON.stringify(items.map(({ uploadUrl: _url, error: _error, file, ...item }) => ({
+    ...item, file: [file.name, file.type, file.size, file.lastModified],
+  })));
+}
+
 export function AddAchievementModal({
   isOpen,
   onClose,
@@ -37,11 +46,137 @@ export function AddAchievementModal({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [draft, setDraft] = useState<UploadDraft | null>(null);
+  const [draftBusy, setDraftBusy] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [draftChoice, setDraftChoice] = useState<'offer' | 'new' | 'ready'>('ready');
+  const [confirmation, setConfirmation] = useState(false);
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  const [ownsDraft, setOwnsDraft] = useState(false);
+  const [replacementApproved, setReplacementApproved] = useState(false);
+  const [conflict, setConflict] = useState(false);
+  const [conflictReviewed, setConflictReviewed] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const cancelRef = useRef(false);
+  const operationRef = useRef(false);
+  const aliveRef = useRef(false);
+  const itemsRef = useRef<UploadQueueItem[]>([]);
+  const lastFocusRef = useRef<HTMLElement | null>(null);
+  const unfinished = items.some((item) => item.stage !== 'succeeded');
+  const busy = running || draftBusy;
+  const blocked = busy || draftChoice !== 'ready';
+  useBeforeUnload(isOpen && (busy || (unfinished && queueSnapshot(items) !== savedSnapshot)));
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; cancelRef.current = true; };
+  }, []);
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    setDraftBusy(true);
+    operationRef.current = true;
+    setDraftError(null);
+    void loadDraft('upload').then((stored) => {
+      if (cancelled) return;
+      if (stored?.kind === 'upload') {
+        setDraft(stored);
+        setDraftChoice('offer');
+      } else {
+        setDraft(null);
+        setDraftChoice('ready');
+      }
+    }).catch((cause: unknown) => {
+      if (!cancelled) setDraftError(cause instanceof Error ? cause.message : 'Could not load the local draft.');
+    }).finally(() => {
+      if (!cancelled) { setDraftBusy(false); operationRef.current = false; }
+    });
+    return () => { cancelled = true; };
+  }, [isOpen]);
+
+  const reportDraftError = (cause: unknown) => {
+    if (!aliveRef.current) return;
+    setDraftError(cause instanceof Error ? cause.message : 'The local draft could not be updated. Try again.');
+    if (cause instanceof DraftConflictError) {
+      setConflict(true);
+      setConflictReviewed(false);
+      setReplacementApproved(false);
+    }
+  };
+
+  const reviewLatestDraft = async () => {
+    if (operationRef.current) return;
+    operationRef.current = true;
+    setDraftBusy(true);
+    try {
+      const stored = await loadDraft('upload');
+      if (!aliveRef.current) return;
+      setDraft(stored?.kind === 'upload' ? stored : null);
+      setOwnsDraft(false);
+      setReplacementApproved(false);
+      setConflict(true);
+      setConflictReviewed(true);
+      setDraftError(null);
+      setNotice(stored ? `The latest draft was saved ${new Date(stored.savedAt).toLocaleString()}. Your current form is unchanged.` : 'The saved draft was removed. Your current form is unchanged.');
+    } catch (cause) { reportDraftError(cause); }
+    finally { operationRef.current = false; if (aliveRef.current) setDraftBusy(false); }
+  };
+
+  const saveLocalDraft = async (closeAfter: boolean) => {
+    if (operationRef.current) return;
+    if ((draft && !ownsDraft && !replacementApproved) || conflict) {
+      setDraftError('Review the latest saved draft, then explicitly choose to keep this form before replacing it. Continue editing to review it.');
+      return;
+    }
+    operationRef.current = true;
+    setDraftBusy(true);
+    setDraftError(null);
+    try {
+      const stored = await saveUploadDraft(items, draft?.revision ?? null);
+      if (!aliveRef.current) return;
+      setDraft(stored);
+      setOwnsDraft(true);
+      setSavedSnapshot(queueSnapshot(items));
+      setNotice(`Draft saved ${new Date(stored.savedAt).toLocaleString()} in this browser.`);
+      if (closeAfter) {
+        setConfirmation(false);
+        setItems([]);
+        setSavedSnapshot(null);
+        setOwnsDraft(false);
+        onClose();
+      }
+    } catch (cause) { reportDraftError(cause); }
+    finally { operationRef.current = false; if (aliveRef.current) setDraftBusy(false); }
+  };
+
+  const discardLocalDraft = async (closeAfter: boolean) => {
+    if (operationRef.current) return;
+    operationRef.current = true;
+    setDraftBusy(true);
+    setDraftError(null);
+    try {
+      await deleteDraft('upload', draft?.revision ?? null);
+      if (!aliveRef.current) return;
+      setDraft(null);
+      setOwnsDraft(false);
+      setSavedSnapshot(null);
+      setItems([]);
+      setConfirmation(false);
+      setDraftChoice('ready');
+      setConflict(false);
+      setNotice(null);
+      if (closeAfter) onClose();
+    } catch (cause) { reportDraftError(cause); }
+    finally { operationRef.current = false; if (aliveRef.current) setDraftBusy(false); }
+  };
 
   const queuedCount = items.filter((item) => item.stage === 'queued').length;
   const savedCount = items.filter((item) => item.stage === 'succeeded').length;
@@ -50,6 +185,7 @@ export function AddAchievementModal({
   ).length;
 
   const handleFilesChange = (event: ChangeEvent<HTMLInputElement>) => {
+    if (blocked || operationRef.current) return;
     const selected = Array.from(event.target.files ?? []);
     event.target.value = '';
     if (selected.length === 0) return;
@@ -95,11 +231,17 @@ export function AddAchievementModal({
     setError(null);
     setNotice(null);
     setStopping(false);
+    setSavedSnapshot(null);
+    setOwnsDraft(false);
+    setReplacementApproved(false);
+    setConfirmation(false);
+    setConflict(false);
+    setConflictReviewed(false);
     cancelRef.current = false;
   }, []);
 
   const handleUpload = async () => {
-    if (running) return;
+    if (blocked || operationRef.current || confirmation) return;
 
     const pending = items.filter((item) => item.stage === 'queued');
     if (pending.length === 0) {
@@ -118,23 +260,59 @@ export function AddAchievementModal({
       return;
     }
 
+    operationRef.current = true;
     setRunning(true);
     setStopping(false);
     setError(null);
     setNotice(null);
     cancelRef.current = false;
 
+    const uploadItems = items;
+    itemsRef.current = uploadItems;
+    const hasSavedDraft = Boolean(draft);
+    let checkpointRevision = draft?.revision ?? null;
+    let checkpointFailure = false;
+
+    // A resumed draft is updated after every item. The intent and confirmed
+    // achievement ID are durable before the next item starts, so a browser
+    // failure cannot make a recovered draft upload a completed file again.
+    const checkpoint = async (nextItems: UploadQueueItem[]) => {
+      if (!hasSavedDraft || checkpointFailure) return;
+      try {
+        const saved = await saveUploadDraft(nextItems, checkpointRevision);
+        checkpointRevision = saved.revision;
+        if (!aliveRef.current) return;
+        setDraft(saved);
+        setOwnsDraft(true);
+        setSavedSnapshot(queueSnapshot(nextItems));
+      } catch (cause) {
+        checkpointFailure = true;
+        cancelRef.current = true;
+        if (aliveRef.current) reportDraftError(cause);
+      }
+    };
+
     try {
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
       const run = await runUploadQueue(
-        items,
+        uploadItems,
         // The browser's fetch needs its window receiver; pass a bound call rather
         // than the bare global so calling it through the dependency object works.
         { fetch: (input, init) => fetch(input, init), timezone },
-        (updated) => updateItem(updated.id, updated),
+        async (updated) => {
+          if (!aliveRef.current) return;
+          const nextItems = itemsRef.current.map((item) =>
+            item.id === updated.id ? updated : item
+          );
+          itemsRef.current = nextItems;
+          setItems(nextItems);
+          await checkpoint(nextItems);
+        },
         () => cancelRef.current
       );
 
+      if (!aliveRef.current) return;
+      itemsRef.current = run.items;
       setItems(run.items);
 
       if (run.achievements.length > 0) {
@@ -145,12 +323,33 @@ export function AddAchievementModal({
 
       if (run.sessionExpired) {
         onSessionExpired?.();
-        setNotice('Your session expired. Unlock the archive, then retry the remaining artwork.');
+        return;
+      } else if (checkpointFailure) {
+        setNotice(
+          'Uploads stopped because the local draft checkpoint could not be updated. Keep this form open and save the draft again before leaving.'
+        );
+        return;
       } else if (run.paused) {
         setNotice(
           'The queue paused. No upload slot or storage allowance is free right now; retry the remaining artwork once space is available.'
         );
       } else if (remaining.length === 0) {
+        if (hasSavedDraft) {
+          try {
+            await deleteDraft('upload', checkpointRevision);
+            if (!aliveRef.current) return;
+            setDraft(null);
+            setOwnsDraft(false);
+            setSavedSnapshot(null);
+          } catch (cause) {
+            if (!aliveRef.current) return;
+            reportDraftError(cause);
+            setNotice(
+              'All artwork was saved, but the local draft could not be removed. Keep this form open and discard the saved draft after fixing the storage error.'
+            );
+            return;
+          }
+        }
         resetQueue();
         onClose();
         return;
@@ -161,30 +360,45 @@ export function AddAchievementModal({
       } else {
         setNotice('Some artwork was not saved. Retry those items or remove them.');
       }
+    } catch (cause) {
+      reportDraftError(cause);
     } finally {
-      setRunning(false);
-      setStopping(false);
+      operationRef.current = false;
+      if (aliveRef.current) {
+        setRunning(false);
+        setStopping(false);
+      }
     }
   };
 
   const handleClose = useCallback(() => {
-    if (running) return;
-    resetQueue();
-    onClose();
-  }, [running, resetQueue, onClose]);
-
-  useEffect(() => {
-    if (!isOpen) {
-      if (triggerRef.current && typeof triggerRef.current.focus === 'function') {
-        triggerRef.current.focus();
-      }
+    if (operationRef.current || busy || confirmation) return;
+    if (unfinished) {
+      setDraftError(null);
+      setConfirmation(true);
       return;
     }
+    resetQueue();
+    onClose();
+  }, [busy, unfinished, confirmation, resetQueue, onClose]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     triggerRef.current = document.activeElement as HTMLElement;
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      const target = triggerRef.current;
+      requestAnimationFrame(() => { if (target?.isConnected) target.focus({ preventScroll: true }); });
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
 
     const timer = setTimeout(() => {
-      if (modalRef.current) {
+      if (modalRef.current && !document.querySelector('dialog[open]') && !modalRef.current.contains(document.activeElement)) {
         const focusables = modalRef.current.querySelectorAll<HTMLElement>(
           'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
         );
@@ -193,6 +407,7 @@ export function AddAchievementModal({
     }, 50);
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (confirmation || document.querySelector('dialog[open]')) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         handleClose();
@@ -227,7 +442,7 @@ export function AddAchievementModal({
       clearTimeout(timer);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isOpen, handleClose]);
+  }, [isOpen, handleClose, confirmation]);
 
   if (!isOpen) return null;
 
@@ -254,6 +469,10 @@ export function AddAchievementModal({
     >
       <div
         ref={modalRef}
+        inert={confirmation || undefined}
+        onFocusCapture={(event) => {
+          if (event.target instanceof HTMLElement) lastFocusRef.current = event.target;
+        }}
         style={{
           backgroundColor: '#fff',
           borderRadius: 12,
@@ -273,7 +492,7 @@ export function AddAchievementModal({
             type="button"
             onClick={handleClose}
             aria-label="Close dialog"
-            disabled={running}
+            disabled={busy}
             style={{
               background: 'none',
               border: 'none',
@@ -330,6 +549,45 @@ export function AddAchievementModal({
           </div>
         )}
 
+        {draftBusy && <p role="status">Updating local draft…</p>}
+        {draftError && <p role="alert">{draftError}</p>}
+        {draftError && !confirmation && <button type="button" className="gallery-button" disabled={busy} onClick={() => void reviewLatestDraft()}>Review latest draft</button>}
+        {conflict && !confirmation && (
+          <div className="gallery-draft-actions">
+            <button type="button" className="gallery-button" disabled={busy} onClick={() => void reviewLatestDraft()}>Reload draft information</button>
+            {conflictReviewed && <button type="button" className="gallery-button" disabled={busy} onClick={() => {
+              setConflict(false); setReplacementApproved(true); setDraftError(null);
+            }}>Keep this form and replace the reviewed draft when saving</button>}
+          </div>
+        )}
+        {draft && draftChoice === 'offer' && (
+          <section aria-label="Saved upload draft">
+            <p>A local upload draft was saved {new Date(draft.savedAt).toLocaleString()}.</p>
+            <div className="gallery-draft-actions">
+              <button type="button" className="gallery-button" disabled={busy} onClick={() => {
+                setItems(draft.items);
+                setOwnsDraft(true);
+                setSavedSnapshot(queueSnapshot(draft.items));
+                setDraftChoice('ready');
+                setNotice('Draft resumed. Review the queue and explicitly retry interrupted uploads.');
+              }}>Resume draft</button>
+              <button type="button" className="gallery-button" disabled={busy} onClick={() => void discardLocalDraft(false)}>Discard draft</button>
+              <button type="button" className="gallery-button" disabled={busy} onClick={() => setDraftChoice('new')}>Start a new upload</button>
+            </div>
+          </section>
+        )}
+        {draftChoice === 'new' && (
+          <section aria-label="Replace upload draft">
+            <p>There is one saved upload draft in this browser. Saving a new upload replaces it. Until then, the existing draft stays saved.</p>
+            <div className="gallery-draft-actions">
+              <button type="button" className="gallery-button" onClick={() => setDraftChoice('offer')}>Back to saved draft</button>
+              <button type="button" className="gallery-button" onClick={() => {
+                setReplacementApproved(true); setOwnsDraft(false); setDraftChoice('ready');
+              }}>Start new upload and allow draft replacement</button>
+            </div>
+          </section>
+        )}
+        <DraftPrivacyNotice />
         <div style={{ marginBottom: 18 }}>
           <label
             htmlFor="achievement-file-input"
@@ -344,7 +602,7 @@ export function AddAchievementModal({
             accept="image/jpeg,image/png,image/webp"
             multiple
             onChange={handleFilesChange}
-            disabled={running || items.length >= MAX_BATCH_FILES}
+            disabled={blocked || items.length >= MAX_BATCH_FILES}
             style={{
               width: '100%',
               boxSizing: 'border-box',
@@ -362,7 +620,7 @@ export function AddAchievementModal({
 
         <BatchUploadList
           items={items}
-          running={running}
+          running={blocked}
           onEdit={(id, patch) => updateItem(id, patch)}
           onRetry={retryItem}
           onRemove={removeItem}
@@ -376,6 +634,7 @@ export function AddAchievementModal({
         )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 12 }}>
+          <button type="button" className="gallery-button" disabled={blocked || !unfinished} onClick={() => void saveLocalDraft(false)}>Save draft</button>
           {running && (
             <button
               type="button"
@@ -401,7 +660,7 @@ export function AddAchievementModal({
           <button
             type="button"
             onClick={handleClose}
-            disabled={running}
+            disabled={busy}
             style={{
               minHeight: 44,
               padding: '10px 18px',
@@ -419,7 +678,7 @@ export function AddAchievementModal({
           <button
             type="button"
             onClick={() => void handleUpload()}
-            disabled={running || queuedCount === 0}
+            disabled={blocked || queuedCount === 0}
             style={{
               minHeight: 44,
               padding: '10px 22px',
@@ -441,7 +700,12 @@ export function AddAchievementModal({
                   : `Upload ${queuedCount} artworks`}
           </button>
         </div>
+        {ownsDraft && <p className="gallery-draft-disclosure">Upload progress updates this saved snapshot. A completed queue removes it; a failed or paused queue keeps the remaining work recoverable.</p>}
+        {items.some((item) => item.intentId !== null) && <p className="gallery-draft-disclosure">Existing upload intents may count toward quota until their normal cleanup. Saving or discarding a local draft does not remove remote uploads.</p>}
       </div>
+      {confirmation && <UnsavedChangesDialog open busy={busy} error={draftError} returnFocus={lastFocusRef.current} onContinue={() => {
+        if (!operationRef.current) setConfirmation(false);
+      }} onSave={() => void saveLocalDraft(true)} onDiscard={() => void discardLocalDraft(true)} />}
     </div>
   );
 }

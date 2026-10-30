@@ -236,18 +236,32 @@ async function finalizeItem(item: UploadQueueItem, deps: UploadDeps): Promise<Ac
     });
   }
 
-  if (response.ok && typeof data.achievement === 'object' && data.achievement !== null) {
+  if (response.ok && typeof data.achievement === 'object' && data.achievement !== null
+    && 'id' in data.achievement && typeof data.achievement.id === 'string' && data.achievement.id) {
     return data.achievement as AchievementItem;
   }
 
   const code = typeof data.code === 'string' ? data.code : 'FINALIZE_FAILED';
   const message = typeof data.error === 'string' ? data.error : 'Finalization failed.';
 
+  if (response.status >= 500 || response.ok) {
+    throw new UploadQueueError(
+      code,
+      'The server could not confirm this upload. Retrying the same upload will not create a duplicate.',
+      'unknown'
+    );
+  }
+
   if (code === 'UPLOAD_NOT_FOUND') {
+    // Storage read failures share this code, so a recovered intent cannot safely be replaced yet.
+    if (!item.uploadUrl) {
+      throw new UploadQueueError(code, 'The existing upload could not be read. Its intent is kept to avoid duplicates. Retry later; if the bytes are missing, wait for the intent to expire before uploading again.', 'unknown');
+    }
     throw new UploadQueueError(code, message, 'queued');
   }
 
-  if (code === 'INTENT_EXPIRED' || code === 'INTENT_CLEANED' || code === 'NOT_FOUND') {
+  if (((code === 'INTENT_EXPIRED' || code === 'INTENT_CLEANED') && response.status === 410)
+    || (code === 'NOT_FOUND' && response.status === 404 && message === 'Upload intent not found')) {
     throw new UploadQueueError(
       code,
       'This upload expired before it was finalized. Retrying sends it again with a new upload intent.',
@@ -260,7 +274,7 @@ async function finalizeItem(item: UploadQueueItem, deps: UploadDeps): Promise<Ac
     throw new UploadQueueError(code, message, 'unknown');
   }
 
-  if (code === 'STORAGE_WRITE_FAILED' || code === 'FINALIZE_FAILED' || response.status >= 500) {
+  if (code === 'STORAGE_WRITE_FAILED' || code === 'FINALIZE_FAILED') {
     throw new UploadQueueError(
       code,
       'The server could not confirm this upload. Retrying the same upload will not create a duplicate.',
@@ -287,10 +301,13 @@ export async function runUploadItem(
   let current: UploadQueueItem = { ...item, error: null };
 
   try {
-    if (!current.intentId || !current.uploadUrl) {
+    if (!current.intentId) {
       current = { ...current, stage: 'uploading' };
       const intent = await requestIntent(current, deps);
       current = { ...current, intentId: intent.intentId, uploadUrl: intent.uploadUrl, stage: 'queued' };
+    } else if (!current.uploadUrl) {
+      // Saved drafts omit short-lived URLs; reconcile the original intent before replacing it.
+      current = { ...current, stage: 'unknown' };
     }
 
     // A finalize retry reuses the bytes already sitting in quarantine.
@@ -342,7 +359,7 @@ export async function runUploadItem(
 export async function runUploadQueue(
   items: UploadQueueItem[],
   deps: UploadDeps,
-  onUpdate: (item: UploadQueueItem) => void,
+  onUpdate: (item: UploadQueueItem) => void | Promise<void>,
   isCancelled: () => boolean = () => false
 ): Promise<UploadQueueRunResult> {
   const results = [...items];
@@ -358,7 +375,9 @@ export async function runUploadQueue(
 
     const result = await runUploadItem(item, deps);
     results[index] = result.item;
-    onUpdate(result.item);
+    // Await the observer so a recovered draft can persist the intent or
+    // achievement before the next item starts.
+    await onUpdate(result.item);
     if (result.achievement) achievements.push(result.achievement);
 
     paused = result.paused || result.item.stage === 'unknown';

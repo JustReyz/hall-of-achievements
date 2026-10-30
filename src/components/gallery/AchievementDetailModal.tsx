@@ -1,8 +1,14 @@
 'use client';
 
-import { useState, useEffect, useRef, type ChangeEvent, type FormEvent } from 'react';
+import { useState, useEffect, useRef, useCallback, type ChangeEvent, type FormEvent } from 'react';
 import { AchievementItem, RestoreRequest } from './types';
 import { ArtworkViewer, type ViewerBackground } from './ArtworkViewer';
+import { UnsavedChangesDialog } from './UnsavedChangesDialog';
+import { useBeforeUnload } from '@/lib/drafts/use-before-unload';
+import {
+  deleteDraft, loadDraft, saveEditDraft, editValues, editsEqual, DraftConflictError,
+  type EditDraft, type EditDraftValues,
+} from '@/lib/drafts/local-drafts';
 
 const RESTORE_MAX_BYTES = 10 * 1024 * 1024; // 10 MiB, matches the upload pipeline
 const RESTORE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -44,6 +50,7 @@ interface AchievementDetailModalProps {
   restoreRequest: RestoreRequest | null;
   onDismissRestore: () => void;
   onCollectionChanged?: () => void;
+  onSessionExpired?: () => void;
 }
 
 export function AchievementDetailModal({
@@ -64,6 +71,7 @@ export function AchievementDetailModal({
   restoreRequest,
   onDismissRestore,
   onCollectionChanged,
+  onSessionExpired,
 }: AchievementDetailModalProps) {
   const [displayUrl, setDisplayUrl] = useState<string | null>(null);
   const [imageLoading, setImageLoading] = useState(false);
@@ -87,27 +95,118 @@ export function AchievementDetailModal({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [baseline, setBaseline] = useState<EditDraftValues | null>(null);
+  const [baselineUpdatedAt, setBaselineUpdatedAt] = useState<string | null>(null);
+  const [draft, setDraft] = useState<EditDraft | null>(null);
+  const [savedSnapshot, setSavedSnapshot] = useState<EditDraftValues | null>(null);
+  const [draftBusy, setDraftBusy] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [draftNotice, setDraftNotice] = useState<string | null>(null);
+  const [draftConflict, setDraftConflict] = useState(false);
+  const [latestDraft, setLatestDraft] = useState<EditDraft | null | undefined>(undefined);
+  const [pendingDestination, setPendingDestination] = useState<'close' | 'cancel' | null>(null);
+  const [needsReview, setNeedsReview] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
+  const operationRef = useRef(false);
+  const identityRef = useRef({ id: achievement?.id, generation: 0 });
+  if (identityRef.current.id !== achievement?.id) {
+    identityRef.current = { id: achievement?.id, generation: identityRef.current.generation + 1 };
+  }
+  const initializedIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => () => { identityRef.current.generation += 1; }, []);
+
+  const applyValues = useCallback((values: EditDraftValues) => {
+    setEditTitle(values.title);
+    setEditDate(values.completionDate);
+    setEditNotes(values.notes);
+    setEditTags(values.tags.join(', '));
+    setEditThumbnailPositionX(values.thumbnailPositionX);
+    setEditThumbnailPositionY(values.thumbnailPositionY);
+  }, []);
+
+  const currentValues: EditDraftValues = {
+    title: editTitle,
+    completionDate: editDate,
+    notes: editNotes,
+    tags: editTags.split(',').map((tag) => tag.trim().toLowerCase()).filter(Boolean),
+    thumbnailPositionX: editThumbnailPositionX,
+    thumbnailPositionY: editThumbnailPositionY,
+  };
+  const dirty = isEditing && baseline !== null && !editsEqual(currentValues, baseline);
+  const busy = saving || restoring || deleting || addingToCollection || draftBusy;
+  useBeforeUnload(Boolean(achievement) && (busy || (dirty && (!savedSnapshot || !editsEqual(currentValues, savedSnapshot)))));
+
+  const finishDismissal = useCallback((destination: 'close' | 'cancel') => {
+    setPendingDestination(null);
+    if (achievement) {
+      applyValues(editValues(achievement));
+      setBaseline(editValues(achievement));
+      setBaselineUpdatedAt(achievement.updatedAt ?? null);
+    }
+    setIsEditing(false);
+    setNeedsReview(false);
+    setSavedSnapshot(null);
+    if (destination === 'close') onClose();
+  }, [achievement, applyValues, onClose]);
+
+  const requestDismissal = useCallback((destination: 'close' | 'cancel') => {
+    if (busy || operationRef.current || pendingDestination) return;
+    if (dirty) {
+      setDraftError(null);
+      setPendingDestination(destination);
+    } else {
+      finishDismissal(destination);
+    }
+  }, [busy, dirty, pendingDestination, finishDismissal]);
+
+  useEffect(() => {
+    if (initializedIdRef.current === achievement?.id) return;
+    initializedIdRef.current = achievement?.id;
+    operationRef.current = false;
+    setSaving(false);
+    setRestoring(false);
+    setDeleting(false);
+    setDraft(null);
+    setSavedSnapshot(null);
+    setDraftError(null);
+    setDraftNotice(null);
+    setDraftConflict(false);
+    setLatestDraft(undefined);
+    setPendingDestination(null);
+    setNeedsReview(false);
+    setUnavailable(false);
+    setIsEditing(false);
+    setError(null);
+    if (!achievement) {
+      setBaseline(null);
+      setEditTitle('');
+      setEditDate('');
+      setEditNotes('');
+      setEditTags('');
+      setDraftBusy(false);
+      return;
+    }
+    const values = editValues(achievement);
+    applyValues(values);
+    setBaseline(values);
+    setBaselineUpdatedAt(achievement.updatedAt ?? null);
+    const generation = identityRef.current.generation;
+    setDraftBusy(true);
+    void loadDraft(`edit:${achievement.id}`).then((loaded) => {
+      if (generation !== identityRef.current.generation) return;
+      if (loaded?.kind === 'edit') setDraft(loaded);
+    }).catch((cause: unknown) => {
+      if (generation === identityRef.current.generation) setDraftError(cause instanceof Error ? cause.message : 'Could not load the local draft.');
+    }).finally(() => {
+      if (generation === identityRef.current.generation) setDraftBusy(false);
+    });
+  }, [achievement, applyValues]);
 
   useEffect(() => {
     if (!achievement) {
       setDisplayUrl(null);
-      setIsEditing(false);
-      setError(null);
       return;
     }
-
-    setEditTitle(achievement.title);
-    setEditDate(achievement.completionDate);
-    setEditNotes(achievement.notes || '');
-    setEditTags(achievement.tags.join(', '));
-    setEditThumbnailPositionX(
-      Number.isFinite(achievement.thumbnailPositionX) ? achievement.thumbnailPositionX : 0.5
-    );
-    setEditThumbnailPositionY(
-      Number.isFinite(achievement.thumbnailPositionY) ? achievement.thumbnailPositionY : 0.5
-    );
-    setIsEditing(false);
-    setError(null);
 
     // Fetch short-lived signed display URL
     let isCancelled = false;
@@ -118,6 +217,10 @@ export function AchievementDetailModal({
     async function loadDisplayAsset() {
       try {
         const res = await fetch(`/api/achievements/${achievement!.id}/assets?type=display`);
+        if (res.status === 401) {
+          if (!isCancelled) onSessionExpired?.();
+          return;
+        }
         if (!res.ok) {
           throw new Error('Failed to load display asset');
         }
@@ -140,7 +243,7 @@ export function AchievementDetailModal({
     return () => {
       isCancelled = true;
     };
-  }, [achievement]);
+  }, [achievement, onSessionExpired]);
 
   useEffect(() => {
     setRestoreResolved(false);
@@ -252,6 +355,7 @@ export function AchievementDetailModal({
   const restoreInputRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const viewerTriggerRef = useRef<HTMLButtonElement>(null);
+  const lastFocusRef = useRef<HTMLElement | null>(null);
   const wasOpenRef = useRef(false);
   const wasViewerOpenRef = useRef(false);
 
@@ -305,12 +409,13 @@ export function AchievementDetailModal({
     if (!achievement) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (pendingDestination || (e.target instanceof Element && e.target.closest('dialog[open]'))) return;
       if (e.key === 'Escape') {
         e.preventDefault();
         if (viewerOpen) {
           onViewerClose();
         } else {
-          onClose();
+          requestDismissal('close');
         }
         return;
       }
@@ -361,7 +466,131 @@ export function AchievementDetailModal({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [achievement, viewerOpen, hasPrevious, hasNext, onClose, onViewerClose, onPrevious, onNext]);
+  }, [achievement, viewerOpen, hasPrevious, hasNext, requestDismissal, pendingDestination, onViewerClose, onPrevious, onNext]);
+
+  const reportDraftFailure = (cause: unknown) => {
+    setDraftError(cause instanceof Error ? cause.message : 'Could not update the local draft. Try again.');
+    if (cause instanceof DraftConflictError) {
+      setDraftError(`${cause.message} Continue editing to review the latest local draft before choosing what to keep.`);
+      setDraftConflict(true);
+      setLatestDraft(undefined);
+    }
+  };
+
+  const persistDraft = async (destination: 'close' | 'cancel' | null = null) => {
+    if (!achievement || busy || operationRef.current || draftConflict) return;
+    operationRef.current = true;
+    setDraftBusy(true);
+    setDraftError(null);
+    const generation = identityRef.current.generation;
+    try {
+      const saved = await saveEditDraft(achievement.id, baselineUpdatedAt, currentValues, draft?.revision ?? null);
+      if (generation !== identityRef.current.generation) return;
+      setDraft(saved);
+      setSavedSnapshot(saved.values);
+      setDraftNotice(`Draft saved locally at ${new Date(saved.savedAt).toLocaleString()}.`);
+      if (destination) finishDismissal(destination);
+    } catch (cause) {
+      if (generation === identityRef.current.generation) reportDraftFailure(cause);
+    } finally {
+      if (generation === identityRef.current.generation) {
+        operationRef.current = false;
+        setDraftBusy(false);
+      }
+    }
+  };
+
+  const discardDraft = async (destination: 'close' | 'cancel' | null = null) => {
+    if (!achievement || busy || operationRef.current || draftConflict) return;
+    operationRef.current = true;
+    setDraftBusy(true);
+    setDraftError(null);
+    const generation = identityRef.current.generation;
+    try {
+      await deleteDraft(`edit:${achievement.id}`, draft?.revision ?? null);
+      if (generation !== identityRef.current.generation) return;
+      setDraft(null);
+      setSavedSnapshot(null);
+      setDraftNotice(null);
+      if (destination) finishDismissal(destination);
+    } catch (cause) {
+      if (generation === identityRef.current.generation) reportDraftFailure(cause);
+    } finally {
+      if (generation === identityRef.current.generation) {
+        operationRef.current = false;
+        setDraftBusy(false);
+      }
+    }
+  };
+
+  const reviewLatestDraft = async () => {
+    if (!achievement || busy || operationRef.current) return;
+    operationRef.current = true;
+    setDraftBusy(true);
+    const generation = identityRef.current.generation;
+    try {
+      const latest = await loadDraft(`edit:${achievement.id}`);
+      if (generation !== identityRef.current.generation) return;
+      if (draftConflict) {
+        setLatestDraft(latest?.kind === 'edit' ? latest : null);
+      } else {
+        setDraft(latest?.kind === 'edit' ? latest : null);
+        setDraftError(null);
+      }
+    } catch (cause) {
+      if (generation === identityRef.current.generation) reportDraftFailure(cause);
+    } finally {
+      if (generation === identityRef.current.generation) {
+        operationRef.current = false;
+        setDraftBusy(false);
+      }
+    }
+  };
+
+  const resumeDraft = async (candidate = draft, replaceCurrent = false) => {
+    if (!achievement || !candidate || (dirty && !replaceCurrent) || busy || operationRef.current) return;
+    operationRef.current = true;
+    setDraftBusy(true);
+    setDraftError(null);
+    const generation = identityRef.current.generation;
+    try {
+      const response = await fetch(`/api/achievements/${achievement.id}`);
+      if (generation !== identityRef.current.generation) return;
+      if (response.status === 401) {
+        onSessionExpired?.();
+        return;
+      }
+      if (response.status === 404 || response.status === 410) {
+        setUnavailable(true);
+        throw new Error('This artwork is unavailable or in Trash. Its local draft is kept and can still be discarded.');
+      }
+      if (!response.ok) throw new Error('Could not load the current artwork. Try resuming again.');
+      const current = await response.json() as AchievementItem;
+      if (generation !== identityRef.current.generation) return;
+      if (current.id !== achievement.id || current.state !== 'ready') {
+        setUnavailable(true);
+        throw new Error('This artwork cannot currently accept edits. Its local draft is kept.');
+      }
+      setBaseline(editValues(current));
+      setBaselineUpdatedAt(candidate.baselineUpdatedAt);
+      setNeedsReview((current.updatedAt ?? null) !== candidate.baselineUpdatedAt);
+      applyValues(candidate.values);
+      setDraft(candidate);
+      setSavedSnapshot(candidate.values);
+      setDraftConflict(false);
+      setLatestDraft(undefined);
+      setIsEditing(true);
+      setUnavailable(false);
+      onUpdate(current);
+    } catch (cause) {
+      if (generation === identityRef.current.generation) reportDraftFailure(cause);
+    } finally {
+      if (generation === identityRef.current.generation) {
+        operationRef.current = false;
+        setDraftBusy(false);
+      }
+    }
+  };
 
   if (!achievement) return null;
 
@@ -376,12 +605,20 @@ export function AchievementDetailModal({
     : [];
 
   const handleDownloadOriginal = async () => {
+    if (downloading || busy || operationRef.current) return;
+    const generation = identityRef.current.generation;
     setDownloading(true);
     setError(null);
     try {
       const res = await fetch(`/api/achievements/${achievement.id}/assets?type=original&download=true`);
+      if (generation !== identityRef.current.generation) return;
+      if (res.status === 401) {
+        onSessionExpired?.();
+        return;
+      }
       if (!res.ok) throw new Error('Failed to obtain download URL');
       const data = (await res.json()) as { url?: string };
+      if (generation !== identityRef.current.generation) return;
       if (data.url) {
         // Trigger browser download
         const link = document.createElement('a');
@@ -392,16 +629,19 @@ export function AchievementDetailModal({
         document.body.removeChild(link);
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Download failed');
+      if (generation === identityRef.current.generation) setError(err instanceof Error ? err.message : 'Download failed');
     } finally {
-      setDownloading(false);
+      if (generation === identityRef.current.generation) setDownloading(false);
     }
   };
 
   const handleSaveEdit = async (e: FormEvent) => {
     e.preventDefault();
+    if (busy || operationRef.current || needsReview || unavailable || achievement.state !== 'ready') return;
+    operationRef.current = true;
     setSaving(true);
     setError(null);
+    const generation = identityRef.current.generation;
 
     const clientTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
     const parsedTags = editTags
@@ -427,7 +667,15 @@ export function AchievementDetailModal({
         }),
       });
 
+      if (generation !== identityRef.current.generation) return;
+      if (res.status === 401) {
+        onSessionExpired?.();
+        return;
+      }
+      if (res.status === 404 || res.status === 410) setUnavailable(true);
+
       const data = (await res.json()) as { error?: string } & AchievementItem;
+      if (generation !== identityRef.current.generation) return;
 
       if (!res.ok) {
         throw new Error(data.error || 'Failed to update achievement');
@@ -435,19 +683,41 @@ export function AchievementDetailModal({
 
       onUpdate(data);
       setIsEditing(false);
+      setBaseline(editValues(data));
+      setBaselineUpdatedAt(data.updatedAt ?? null);
+      applyValues(editValues(data));
+      setSavedSnapshot(null);
+      setNeedsReview(false);
+      try {
+        await deleteDraft(`edit:${achievement.id}`, draft?.revision ?? null);
+        if (generation !== identityRef.current.generation) return;
+        setDraft(null);
+        setDraftNotice(null);
+        setDraftError(null);
+      } catch (cause) {
+        if (generation !== identityRef.current.generation) return;
+        setDraftNotice('Artwork saved successfully. Local draft cleanup failed; discard the old draft when storage is available.');
+        reportDraftFailure(cause);
+      }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Save failed');
+      if (generation === identityRef.current.generation) setError(err instanceof Error ? err.message : 'Save failed');
     } finally {
-      setSaving(false);
+      if (generation === identityRef.current.generation) {
+        operationRef.current = false;
+        setSaving(false);
+      }
     }
   };
 
   const handleDelete = async () => {
+    if (busy || operationRef.current) return;
     const confirmed = window.confirm(
       `Move "${achievement.title}" to Trash?\nIt leaves the gallery but its images and metadata are kept. Restore it from Trash, or delete it permanently from there.`
     );
     if (!confirmed) return;
 
+    operationRef.current = true;
+    const generation = identityRef.current.generation;
     setDeleting(true);
     setError(null);
     try {
@@ -458,6 +728,12 @@ export function AchievementDetailModal({
         },
       });
 
+      if (generation !== identityRef.current.generation) return;
+      if (res.status === 401) {
+        onSessionExpired?.();
+        return;
+      }
+
       if (!res.ok) {
         const data = (await res.json()) as { error?: string };
         throw new Error(data.error || 'Deletion failed');
@@ -466,16 +742,19 @@ export function AchievementDetailModal({
       onDelete(achievement.id);
       onClose();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to delete achievement');
+      if (generation === identityRef.current.generation) setError(err instanceof Error ? err.message : 'Failed to delete achievement');
     } finally {
-      setDeleting(false);
+      if (generation === identityRef.current.generation) {
+        operationRef.current = false;
+        setDeleting(false);
+      }
     }
   };
 
   const handleRestoreFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
-    if (!file) return;
+    if (!file || busy || operationRef.current) return;
 
     if (!RESTORE_MIME_TYPES.includes(file.type)) {
       setError('Only JPEG, PNG, and WebP images can be restored.');
@@ -488,6 +767,8 @@ export function AchievementDetailModal({
       return;
     }
 
+    operationRef.current = true;
+    const generation = identityRef.current.generation;
     setRestoring(true);
     setError(null);
 
@@ -500,11 +781,17 @@ export function AchievementDetailModal({
         },
         body: JSON.stringify({ fileName: file.name, mimeType: file.type, fileSize: file.size }),
       });
+      if (generation !== identityRef.current.generation) return;
+      if (intentRes.status === 401) {
+        onSessionExpired?.();
+        return;
+      }
       const intentData = (await intentRes.json()) as {
         intentId?: string;
         uploadUrl?: string;
         error?: string;
       };
+      if (generation !== identityRef.current.generation) return;
       if (!intentRes.ok || !intentData.intentId || !intentData.uploadUrl) {
         throw new Error(intentData.error || 'Failed to start the restore upload');
       }
@@ -514,6 +801,7 @@ export function AchievementDetailModal({
         headers: { 'Content-Type': file.type },
         body: file,
       });
+      if (generation !== identityRef.current.generation) return;
       if (!uploadRes.ok) {
         throw new Error('Failed to upload the replacement image');
       }
@@ -526,12 +814,18 @@ export function AchievementDetailModal({
         },
         body: JSON.stringify({ achievementId: achievement.id }),
       });
+      if (generation !== identityRef.current.generation) return;
+      if (finalizeRes.status === 401) {
+        onSessionExpired?.();
+        return;
+      }
       const finalizeData = (await finalizeRes.json()) as {
         finalized?: boolean;
         achievement?: AchievementItem;
         asset?: NonNullable<AchievementItem['asset']>;
         error?: string;
       };
+      if (generation !== identityRef.current.generation) return;
       if (!finalizeRes.ok || !finalizeData.finalized || !finalizeData.achievement) {
         throw new Error(finalizeData.error || 'Failed to restore the artwork');
       }
@@ -540,9 +834,12 @@ export function AchievementDetailModal({
       setRestoreResolved(true);
       onUpdate({ ...finalizeData.achievement, asset: finalizeData.asset ?? achievement.asset ?? null });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to restore artwork');
+      if (generation === identityRef.current.generation) setError(err instanceof Error ? err.message : 'Failed to restore artwork');
     } finally {
-      setRestoring(false);
+      if (generation === identityRef.current.generation) {
+        operationRef.current = false;
+        setRestoring(false);
+      }
     }
   };
 
@@ -566,11 +863,14 @@ export function AchievementDetailModal({
         zIndex: 1000,
       }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) requestDismissal('close');
       }}
     >
       <div
-        inert={viewerOpen || undefined}
+        inert={viewerOpen || Boolean(pendingDestination) || undefined}
+        onFocusCapture={(event) => {
+          if (event.target instanceof HTMLElement) lastFocusRef.current = event.target;
+        }}
         style={{
           backgroundColor: '#fff',
           borderRadius: 12,
@@ -610,7 +910,8 @@ export function AchievementDetailModal({
           </h2>
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => requestDismissal('close')}
+            disabled={busy}
             aria-label="Close dialog"
             style={{
               background: 'none',
@@ -646,6 +947,57 @@ export function AchievementDetailModal({
           >
             {error}
           </div>
+        )}
+
+        {(draft || draftBusy || draftError || draftNotice) && (
+          <section aria-label="Local artwork draft" style={{ margin: '16px 24px 0', padding: 12, border: '1px solid #cbd5e1', borderRadius: 6 }}>
+            {draftBusy && <p role="status">Working with the local draft...</p>}
+            {draftNotice && <p role="status">{draftNotice}</p>}
+            {draftError && <p role="alert">{draftError}</p>}
+            {draft && (
+              <>
+                <p>Local draft saved {new Date(draft.savedAt).toLocaleString()}.</p>
+                {!savedSnapshot && (
+                  <button type="button" className="gallery-button" disabled={busy || dirty || draftConflict || unavailable} onClick={() => void resumeDraft()}>
+                    Resume draft
+                  </button>
+                )}
+                <button type="button" className="gallery-button" disabled={busy || draftConflict} onClick={() => void discardDraft()}>
+                  Discard draft
+                </button>
+              </>
+            )}
+            {draftError && (
+              <button type="button" className="gallery-button" disabled={busy} onClick={() => void reviewLatestDraft()}>
+                {draftConflict ? 'Review latest draft' : 'Retry draft access'}
+              </button>
+            )}
+            {draftConflict && latestDraft !== undefined && (
+              <div>
+                {latestDraft ? (
+                  <>
+                    <p>The other tab saved this draft at {new Date(latestDraft.savedAt).toLocaleString()}.</p>
+                    <dl>
+                      <dt>Title</dt><dd>{latestDraft.values.title || '(empty)'}</dd>
+                      <dt>Completion date</dt><dd>{latestDraft.values.completionDate || '(empty)'}</dd>
+                      <dt>Notes</dt><dd style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{latestDraft.values.notes || '(empty)'}</dd>
+                      <dt>Tags</dt><dd>{latestDraft.values.tags.join(', ') || '(none)'}</dd>
+                      <dt>Thumbnail framing</dt><dd>{Math.round(latestDraft.values.thumbnailPositionX * 100)}% horizontal, {Math.round(latestDraft.values.thumbnailPositionY * 100)}% vertical</dd>
+                    </dl>
+                    <button type="button" className="gallery-button" disabled={busy || unavailable} onClick={() => void resumeDraft(latestDraft, true)}>Use latest draft</button>
+                  </>
+                ) : <p>The local draft was removed by another tab.</p>}
+                <button type="button" className="gallery-button" disabled={busy} onClick={() => {
+                  setDraft(latestDraft);
+                  setSavedSnapshot(null);
+                  setDraftConflict(false);
+                  setLatestDraft(undefined);
+                  setDraftError(null);
+                  setDraftNotice('Current edits kept. Save draft will replace the local draft you just reviewed.');
+                }}>Keep current edits</button>
+              </div>
+            )}
+          </section>
         )}
 
         {activeRestoreRequest && (
@@ -852,6 +1204,7 @@ export function AchievementDetailModal({
                 ref={viewerTriggerRef}
                 type="button"
                 onClick={onViewerOpen}
+                disabled={isEditing || busy}
                 style={{
                   position: 'absolute',
                   right: 12,
@@ -1008,7 +1361,22 @@ export function AchievementDetailModal({
                   <div style={{ display: 'flex', gap: 10 }}>
                     <button
                       type="button"
-                      onClick={() => setIsEditing(true)}
+                      disabled={
+                        busy ||
+                        unavailable ||
+                        Boolean(draft && !savedSnapshot) ||
+                        achievement.state !== 'ready'
+                      }
+                      title={draft && !savedSnapshot ? 'Resume or discard the saved local draft before editing.' : undefined}
+                      onClick={() => {
+                        const values = editValues(achievement);
+                        applyValues(values);
+                        setBaseline(values);
+                        setBaselineUpdatedAt(achievement.updatedAt ?? null);
+                        setSavedSnapshot(null);
+                        setIsEditing(true);
+                        setError(null);
+                      }}
                       style={{
                         flex: 1,
                         padding: '9px 14px',
@@ -1046,6 +1414,22 @@ export function AchievementDetailModal({
             ) : (
               /* Edit Form */
               <form onSubmit={(e) => void handleSaveEdit(e)} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <fieldset disabled={busy} style={{ display: 'contents', border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+                {needsReview && (
+                  <div role="alert" style={{ marginBottom: 14 }}>
+                    <p>The artwork changed since this draft was saved. Review all recovered edits against the current artwork before saving.</p>
+                    <label>
+                      <input type="checkbox" onChange={(event) => {
+                        if (event.target.checked) {
+                          setNeedsReview(false);
+                          setBaselineUpdatedAt(achievement.updatedAt ?? null);
+                        }
+                      }} />
+                      I have reviewed the recovered edits.
+                    </label>
+                  </div>
+                )}
+                {unavailable && <p role="alert">This artwork is unavailable or in Trash. Keep or discard the local draft; it cannot currently be applied.</p>}
                 <div style={{ marginBottom: 14 }}>
                   <label htmlFor="edit-title-input" style={{ display: 'block', fontWeight: 600, fontSize: '13px', color: '#334155', marginBottom: 4 }}>
                     Title * ({editTitle.length}/120)
@@ -1236,11 +1620,20 @@ export function AchievementDetailModal({
                   />
                 </div>
 
-                <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                <p style={{ fontSize: 12, color: '#475569' }}>
+                  Drafts stay in this browser on this device, including after logout. They are not encrypted or synced.
+                  Anyone with this browser profile can access them. Clearing site data, private browsing, or browser storage eviction can remove them.
+                  Save again after further edits; closing the browser does not save automatically.
+                </p>
+                <p role="status" style={{ fontSize: 12 }}>
+                  {savedSnapshot && editsEqual(currentValues, savedSnapshot) ? 'These edits are saved as a local draft.' : dirty ? 'These edits have not been saved as a local draft.' : 'No unfinished edits.'}
+                </p>
+                <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 10 }}>
+                  <button type="button" className="gallery-button" disabled={busy || draftConflict} onClick={() => void persistDraft()}>Save draft</button>
                   <button
                     type="button"
-                    onClick={() => setIsEditing(false)}
-                    disabled={saving}
+                    onClick={() => requestDismissal('cancel')}
+                    disabled={busy}
                     style={{
                       padding: '8px 14px',
                       backgroundColor: '#f1f5f9',
@@ -1255,7 +1648,7 @@ export function AchievementDetailModal({
                   </button>
                   <button
                     type="submit"
-                    disabled={saving}
+                    disabled={busy || needsReview || unavailable || achievement.state !== 'ready'}
                     style={{
                       padding: '8px 18px',
                       backgroundColor: '#2563eb',
@@ -1269,11 +1662,26 @@ export function AchievementDetailModal({
                     {saving ? 'Saving...' : 'Save Changes'}
                   </button>
                 </div>
+                </fieldset>
               </form>
             )}
           </div>
         </div>
       </div>
+
+      {pendingDestination && (
+        <UnsavedChangesDialog
+          open
+          busy={draftBusy}
+          error={draftError}
+          returnFocus={lastFocusRef.current}
+          onContinue={() => {
+            if (!operationRef.current && !draftBusy) setPendingDestination(null);
+          }}
+          onSave={() => void persistDraft(pendingDestination)}
+          onDiscard={() => void discardDraft(pendingDestination)}
+        />
+      )}
 
       {viewerOpen && (
         <ArtworkViewer

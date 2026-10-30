@@ -48,13 +48,15 @@ export function ToolDialog({
         if (!target?.isConnected) return;
         if (!target.getClientRects().length) return;
         if (document.querySelector('dialog[open]')) return;
-        if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+        const parentDialog = document.querySelector('[role="dialog"][aria-modal="true"]');
+        if (parentDialog && !parentDialog.contains(target)) return;
         target.focus({ preventScroll: true });
       });
     };
   }, [open]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDialogElement>) => {
+    event.stopPropagation();
     if (event.key !== 'Tab') return;
     const dialog = dialogRef.current;
     if (!dialog) return;
