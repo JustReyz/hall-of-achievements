@@ -596,6 +596,20 @@ body {
   overflow-y: auto;
 }
 
+.gallery-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-block: 12px;
+}
+
+.gallery-draft-disclosure {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #64748b;
+  overflow-wrap: anywhere;
+}
+
 .gallery-tool-dialog::backdrop {
   background: rgb(20 61 54 / 38%);
 }

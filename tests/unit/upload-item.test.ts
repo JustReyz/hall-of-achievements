@@ -142,6 +142,57 @@ describe('Unit: batch upload item state machine', () => {
     expect(result.item.error).toBe('Invalid file format.');
   });
 
+  it('reconciles a recovered intent without its signed URL before any new upload', async () => {
+    const { fetchImpl, calls } = plannedFetch({});
+    const recovered = { ...makeItem(), intentId: 'intent-1', uploadUrl: null };
+    const result = await runUploadItem(recovered, deps(fetchImpl));
+    expect(result.item.stage).toBe('succeeded');
+    expect(result.item.achievementId).toBe(ACHIEVEMENT.id);
+    expect(calls).toEqual(['finalize']);
+    await runUploadItem(result.item, deps(fetchImpl));
+    expect(calls).toEqual(['finalize']);
+  });
+
+  it.each([
+    ['INTENT_EXPIRED', 410, 'expired'],
+    ['INTENT_CLEANED', 410, 'cleaned'],
+    ['NOT_FOUND', 404, 'Upload intent not found'],
+  ])('allows replacement only after a definitive recovered intent outcome %s', async (code, status, error) => {
+    let attempts = 0;
+    const { fetchImpl, calls } = plannedFetch({ finalize: () => ++attempts === 1
+      ? jsonResponse({ code, error }, status)
+      : jsonResponse({ achievement: ACHIEVEMENT }) });
+    const first = await runUploadItem({ ...makeItem(), intentId: 'old-intent', uploadUrl: null }, deps(fetchImpl));
+    expect(first.item.intentId).toBeNull();
+    expect(calls).toEqual(['finalize']);
+    const retry = await runUploadItem(first.item, deps(fetchImpl));
+    expect(retry.item.stage).toBe('succeeded');
+    expect(calls).toEqual(['finalize', 'intent', 'put', 'finalize']);
+  });
+
+  it.each([
+    ['UNAUTHENTICATED', 401, 'Session expired'],
+    ['UPLOAD_NOT_FOUND', 400, 'Storage unavailable'],
+    ['NOT_FOUND', 404, 'Linked achievement not found'],
+    ['INTENT_EXPIRED', 503, 'Ambiguous proxy failure'],
+    ['INTENT_NOT_PENDING', 409, 'Changed concurrently'],
+    ['FINALIZE_FAILED', 500, 'Failure'],
+  ])('preserves recovered intent for %s with status %s', async (code, status, error) => {
+    const { fetchImpl, calls } = plannedFetch({ finalize: () => jsonResponse({ code, error }, status) });
+    const result = await runUploadItem({ ...makeItem(), intentId: 'old-intent', uploadUrl: null }, deps(fetchImpl));
+    expect(result.item.intentId).toBe('old-intent');
+    expect(result.sessionExpired).toBe(status === 401);
+    expect(calls).toEqual(['finalize']);
+  });
+
+  it('keeps a recovered intent after a lost finalize response', async () => {
+    const { fetchImpl, calls } = plannedFetch({ finalize: () => { throw new TypeError('connection lost'); } });
+    const result = await runUploadItem({ ...makeItem(), intentId: 'old-intent', uploadUrl: null }, deps(fetchImpl));
+    expect(result.item.intentId).toBe('old-intent');
+    expect(result.item.stage).toBe('unknown');
+    expect(calls).toEqual(['finalize']);
+  });
+
   it('drops an expired intent so the retry starts a fresh upload', async () => {
     let finalizeAttempts = 0;
     const { fetchImpl, calls } = plannedFetch({
@@ -205,7 +256,9 @@ describe('Unit: batch upload item state machine', () => {
     const items = [makeItem('broken.png'), makeItem('fine.png')];
     const updates: UploadQueueItem[] = [];
 
-    const run = await runUploadQueue(items, deps(failingFetch), (item) => updates.push(item));
+    const run = await runUploadQueue(items, deps(failingFetch), (item) => {
+      updates.push(item);
+    });
 
     expect(run.paused).toBe(false);
     expect(run.items[0]?.stage).toBe('queued');
@@ -214,6 +267,36 @@ describe('Unit: batch upload item state machine', () => {
     expect(updates).toHaveLength(2);
     // The untouched fetch plan is not used; keep the reference meaningful.
     expect(typeof fetchImpl).toBe('function');
+  });
+
+  it('awaits the durable progress observer before starting the next item', async () => {
+    let firstPersisted = false;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/uploads/intents') {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { fileName?: string };
+        if (body.fileName === 'second.png') expect(firstPersisted).toBe(true);
+        return jsonResponse({ intentId: 'intent-1', uploadUrl: '/mock-upload' }, 201);
+      }
+      if (url.includes('/finalize')) {
+        return jsonResponse({ finalized: true, achievement: ACHIEVEMENT });
+      }
+      return new Response(null, { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const run = await runUploadQueue(
+      [makeItem('first.png'), makeItem('second.png')],
+      deps(fetchImpl),
+      async (item) => {
+        if (item.file.name === 'first.png') {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          firstPersisted = true;
+        }
+      }
+    );
+
+    expect(run.items.every((item) => item.stage === 'succeeded')).toBe(true);
+    expect(firstPersisted).toBe(true);
   });
 
   it('pauses the queue when the server reports no free upload slot', async () => {
