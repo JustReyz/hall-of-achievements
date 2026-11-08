@@ -292,9 +292,107 @@ body {
   color: var(--gallery-ink);
 }
 
+.gallery-toolbar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+
+.gallery-control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.gallery-control-label {
+  color: var(--gallery-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.gallery-sort {
+  position: relative;
+}
+
+.gallery-sort-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--gallery-border);
+  border-radius: 4px;
+  background: var(--gallery-canvas);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  list-style: none;
+}
+
+.gallery-sort-trigger::-webkit-details-marker { display: none; }
+.gallery-sort[open] .gallery-sort-trigger,
+.gallery-sort-trigger:hover { border-color: var(--gallery-ink); }
+
+.gallery-sort-chevron {
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-2px);
+}
+
+.gallery-sort-menu {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 5px);
+  left: 0;
+  min-width: 100%;
+  padding: 5px;
+  border: 1px solid var(--gallery-border);
+  border-radius: 6px;
+  background: var(--gallery-canvas);
+  box-shadow: 0 8px 20px rgb(20 61 54 / 12%);
+}
+
+.gallery-sort-option {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--gallery-ink);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gallery-sort-option:hover,
+.gallery-sort-option[aria-pressed='true'] { background: #e6ece7; }
+
+.gallery-density-buttons {
+  display: flex;
+}
+
+.gallery-button-density + .gallery-button-density { margin-left: -1px; }
+.gallery-button-density:first-child { border-radius: 4px 0 0 4px; }
+.gallery-button-density:last-child { border-radius: 0 4px 4px 0; }
+.gallery-button-density.gallery-button-active {
+  position: relative;
+  border-color: var(--gallery-ink);
+  background: var(--gallery-ink);
+  color: var(--gallery-canvas);
+}
+
 .gallery-toolbar-actions {
   display: flex;
   flex-wrap: wrap;
+  align-self: end;
   gap: 8px;
 }
 
@@ -974,6 +1072,19 @@ body {
 
   .gallery-search {
     flex-basis: 100%;
+  }
+
+  .gallery-toolbar-controls {
+    width: 100%;
+  }
+
+  .gallery-density-group {
+    max-width: 100%;
+  }
+
+  .gallery-button-density {
+    padding-right: 12px;
+    padding-left: 12px;
   }
 
   .gallery-toolbar-actions {
