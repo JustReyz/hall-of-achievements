@@ -2,7 +2,12 @@
 
 import { useState, useEffect, useCallback, useRef, type FormEvent } from 'react';
 import { AchievementItem, GalleryResponse, StorageQuotaInfo } from '@/components/gallery/types';
-import type { GalleryFilters, RestoreRequest } from '@/components/gallery/types';
+import type {
+  GalleryFilters,
+  RestoreRequest,
+  GalleryDensity,
+  AchievementSort,
+} from '@/components/gallery/types';
 import { SearchBar } from '@/components/gallery/SearchBar';
 import { TagBrowser } from '@/components/gallery/TagBrowser';
 import { GalleryGrid } from '@/components/gallery/GalleryGrid';
@@ -34,7 +39,7 @@ type GalleryTool =
   | 'trash'
   | 'notifications';
 
-const EMPTY_FILTERS: GalleryFilters = { q: '', from: '', to: '', tag: '' };
+const EMPTY_FILTERS: GalleryFilters = { q: '', from: '', to: '', tag: '', sort: 'newest' };
 
 interface GalleryRequestResult {
   ok: boolean;
@@ -85,6 +90,31 @@ export default function HomePage() {
   const navigationRequestId = useRef(0);
   const [navigationPending, setNavigationPending] = useState(false);
   const [quota, setQuota] = useState<StorageQuotaInfo | null>(null);
+
+  // Gallery density state and in-flight cancellation refs
+  const [density, setDensity] = useState<GalleryDensity>('comfortable');
+  const achievementsAbortRef = useRef<AbortController | null>(null);
+  const tagsAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('hall_gallery_density');
+      if (saved === 'compact' || saved === 'comfortable' || saved === 'roomy') {
+        setDensity(saved);
+      }
+    } catch {
+      // Ignore localStorage errors (e.g. security error or storage disabled)
+    }
+  }, []);
+
+  const handleDensityChange = (nextDensity: GalleryDensity) => {
+    setDensity(nextDensity);
+    try {
+      localStorage.setItem('hall_gallery_density', nextDensity);
+    } catch {
+      // Ignore localStorage errors
+    }
+  };
 
   // Modal state
   const [activeTool, setActiveTool] = useState<GalleryTool | null>(null);
@@ -212,6 +242,8 @@ export default function HomePage() {
   const handleSessionExpired = useCallback(() => {
     requestGeneration.current++;
     tagRequestGeneration.current++;
+    achievementsAbortRef.current?.abort();
+    tagsAbortRef.current?.abort();
     setActiveTool(null);
     setIsAddModalOpen(false);
     setToolReturnTarget(null);
@@ -349,13 +381,20 @@ export default function HomePage() {
     ): Promise<GalleryRequestResult> => {
       const collection = collectionRef.current;
       const appendKey = pageCursor
-        ? `${active.q}\u0000${active.from}\u0000${active.to}\u0000${active.tag}\u0000${collection?.id ?? ''}\u0000${pageCursor}`
+        ? `${active.q}\u0000${active.from}\u0000${active.to}\u0000${active.tag}\u0000${active.sort ?? 'newest'}\u0000${collection?.id ?? ''}\u0000${pageCursor}`
         : null;
 
       if (appendKey) {
         const existing = appendRequests.current.get(appendKey);
         if (existing) return existing;
       }
+
+      // Fresh filter/sort/search change: abort prior in-flight achievements request
+      if (!pageCursor) {
+        achievementsAbortRef.current?.abort();
+        achievementsAbortRef.current = new AbortController();
+      }
+      const signal = achievementsAbortRef.current?.signal ?? null;
 
       const generation = ++requestGeneration.current;
       setGalleryLoading(true);
@@ -376,11 +415,12 @@ export default function HomePage() {
           if (active.from) params.set('from', active.from);
           if (active.to) params.set('to', active.to);
           if (active.tag) params.set('tag', active.tag);
+          if (active.sort) params.set('sort', active.sort);
           if (pageCursor) params.set('cursor', pageCursor);
           const endpoint = collection
             ? `/api/collections/${collection.id}/items`
             : '/api/achievements';
-          const response = await fetch(`${endpoint}?${params}`);
+          const response = await fetch(`${endpoint}?${params}`, { signal });
           if (generation !== requestGeneration.current) {
             return { ok: false, items: [], nextCursor: null, hasMore: false };
           }
@@ -409,7 +449,10 @@ export default function HomePage() {
             nextCursor: data.nextCursor,
             hasMore: data.hasMore,
           };
-        } catch {
+        } catch (err: unknown) {
+          if ((err as Error)?.name === 'AbortError') {
+            return { ok: false, items: [], nextCursor: null, hasMore: false };
+          }
           if (generation === requestGeneration.current) {
             setGalleryError('Failed to load artwork. Please retry.');
             setFailedCursor(pageCursor);
@@ -439,6 +482,10 @@ export default function HomePage() {
   // 4. Fetch the tag facet for the active search and date filters.
   const fetchTags = useCallback(
     async (active: GalleryFilters) => {
+      tagsAbortRef.current?.abort();
+      tagsAbortRef.current = new AbortController();
+      const signal = tagsAbortRef.current?.signal ?? null;
+
       const generation = ++tagRequestGeneration.current;
       setTagLoading(true);
       setTagError(null);
@@ -451,7 +498,7 @@ export default function HomePage() {
         const collection = collectionRef.current;
         if (collection) params.set('collectionId', collection.id);
         const query = params.toString();
-        const response = await fetch(`/api/tags${query ? `?${query}` : ''}`);
+        const response = await fetch(`/api/tags${query ? `?${query}` : ''}`, { signal });
         if (generation !== tagRequestGeneration.current) return;
         if (response.status === 401) {
           handleSessionExpired();
@@ -461,7 +508,10 @@ export default function HomePage() {
         const data = (await response.json()) as { tags: string[] };
         if (generation !== tagRequestGeneration.current) return;
         setTags(data.tags);
-      } catch {
+      } catch (err: unknown) {
+        if ((err as Error)?.name === 'AbortError') {
+          return;
+        }
         if (generation === tagRequestGeneration.current) {
           setTagError('Failed to load tags. Please retry.');
         }
@@ -490,6 +540,8 @@ export default function HomePage() {
     () => () => {
       requestGeneration.current++;
       tagRequestGeneration.current++;
+      achievementsAbortRef.current?.abort();
+      tagsAbortRef.current?.abort();
     },
     []
   );
@@ -502,7 +554,8 @@ export default function HomePage() {
         next.q === filters.q &&
         next.from === filters.from &&
         next.to === filters.to &&
-        next.tag === filters.tag
+        next.tag === filters.tag &&
+        (next.sort ?? 'newest') === (filters.sort ?? 'newest')
       ) {
         return;
       }
@@ -513,6 +566,18 @@ export default function HomePage() {
       void fetchTags(next);
     },
     [closeDetail, fetchAchievements, fetchTags, filters, resetContactSheetSelection]
+  );
+
+  const handleSortChange = useCallback(
+    (nextSort: AchievementSort) => {
+      if ((filters.sort ?? 'newest') === nextSort) return;
+      closeDetail();
+      resetContactSheetSelection();
+      const next: GalleryFilters = { ...filters, sort: nextSort };
+      setFilters(next);
+      void fetchAchievements(next);
+    },
+    [closeDetail, fetchAchievements, filters, resetContactSheetSelection]
   );
 
   // Handle Search input from SearchBar
@@ -904,6 +969,58 @@ export default function HomePage() {
 
         <div className="gallery-toolbar">
           <div className="gallery-search"><SearchBar onSearch={handleSearch} /></div>
+          <div className="gallery-toolbar-controls" role="toolbar" aria-label="Gallery display controls">
+            <div className="gallery-control-group">
+              <label htmlFor="gallery-sort-select" className="gallery-control-label">
+                Sort:
+              </label>
+              <select
+                id="gallery-sort-select"
+                className="gallery-select"
+                value={filters.sort || 'newest'}
+                onChange={(e) => handleSortChange(e.target.value as AchievementSort)}
+                aria-label="Sort order"
+              >
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+              </select>
+            </div>
+            <div className="gallery-control-group gallery-density-group" role="group" aria-label="Gallery density">
+              <span className="gallery-control-label" id="density-label">Density:</span>
+              <div className="gallery-density-buttons" role="radiogroup" aria-labelledby="density-label">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={density === 'compact'}
+                  className={`gallery-button gallery-button-density${density === 'compact' ? ' gallery-button-active' : ''}`}
+                  onClick={() => handleDensityChange('compact')}
+                  aria-label="Compact density"
+                >
+                  Compact
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={density === 'comfortable'}
+                  className={`gallery-button gallery-button-density${density === 'comfortable' ? ' gallery-button-active' : ''}`}
+                  onClick={() => handleDensityChange('comfortable')}
+                  aria-label="Comfortable density"
+                >
+                  Comfortable
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={density === 'roomy'}
+                  className={`gallery-button gallery-button-density${density === 'roomy' ? ' gallery-button-active' : ''}`}
+                  onClick={() => handleDensityChange('roomy')}
+                  aria-label="Roomy density"
+                >
+                  Roomy
+                </button>
+              </div>
+            </div>
+          </div>
           <nav aria-label="Gallery tools" className="gallery-toolbar-actions">
             <button
               ref={filtersButtonRef}
@@ -972,6 +1089,7 @@ export default function HomePage() {
               loading={galleryLoading}
               hasMore={hasMore && !galleryError}
               hasActiveFilters={Boolean(filters.q || filters.from || filters.to || filters.tag)}
+              density={density}
               onLoadMore={() => void handleLoadMore()}
               onSelectAchievement={selectForDetail}
               onOpenAddModal={() => setIsAddModalOpen(true)}

@@ -1,8 +1,12 @@
+export type AchievementSort = 'newest' | 'oldest';
+export type GalleryDensity = 'compact' | 'comfortable' | 'roomy';
+
 export interface GalleryFilters {
   q: string;
   from: string;
   to: string;
   tag: string;
+  sort?: AchievementSort;
 }
 
 export interface AchievementItem {

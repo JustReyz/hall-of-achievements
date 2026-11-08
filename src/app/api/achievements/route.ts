@@ -1,5 +1,5 @@
 import { type NextRequest } from 'next/server';
-import { eq, and, or, lt, desc } from 'drizzle-orm';
+import { eq, and, or, lt, gt, desc, asc } from 'drizzle-orm';
 import { authenticateApiRequest, jsonError, jsonResponse } from '@/lib/auth/api-guard';
 import { getDb } from '@/lib/db';
 import { achievements, assets } from '@/lib/db/schema';
@@ -9,6 +9,8 @@ import { finalizeUpload } from '@/lib/uploads/finalize';
 import {
   validateTagFilter,
   validateDateRange,
+  validateAchievementSort,
+  type AchievementSort,
   ValidationError,
 } from '@/lib/validation/achievement';
 
@@ -21,15 +23,17 @@ export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   let range: { from: string; to: string };
   let tag: string;
+  let sort: AchievementSort;
   try {
     range = validateDateRange(url.searchParams.get('from'), url.searchParams.get('to'));
     tag = validateTagFilter(url.searchParams.get('tag'));
+    sort = validateAchievementSort(url.searchParams.get('sort'));
   } catch (err) {
     if (err instanceof ValidationError) return jsonError(err.message, err.statusCode, err.code);
     throw err;
   }
   const q = url.searchParams.get('q')?.trim() || '';
-  const filters: GalleryFilters = { q, from: range.from, to: range.to, tag };
+  const filters: GalleryFilters = { q, from: range.from, to: range.to, tag, sort };
   const cursorParam = url.searchParams.get('cursor')?.trim();
   const limitParam = parseInt(url.searchParams.get('limit') || String(DEFAULT_PAGE_LIMIT), 10);
   const limit = isNaN(limitParam) || limitParam < 1 ? DEFAULT_PAGE_LIMIT : Math.min(limitParam, 50);
@@ -54,16 +58,32 @@ export async function GET(request: NextRequest) {
 
     // Cursor pagination condition
     if (cursorDate && cursorId) {
-      conditions.push(
-        or(
-          lt(achievements.completionDate, cursorDate),
-          and(
-            eq(achievements.completionDate, cursorDate),
-            lt(achievements.id, cursorId)
-          )
-        )!
-      );
+      if (sort === 'oldest') {
+        conditions.push(
+          or(
+            gt(achievements.completionDate, cursorDate),
+            and(
+              eq(achievements.completionDate, cursorDate),
+              gt(achievements.id, cursorId)
+            )
+          )!
+        );
+      } else {
+        conditions.push(
+          or(
+            lt(achievements.completionDate, cursorDate),
+            and(
+              eq(achievements.completionDate, cursorDate),
+              lt(achievements.id, cursorId)
+            )
+          )!
+        );
+      }
     }
+
+    const orderClause = sort === 'oldest'
+      ? [asc(achievements.completionDate), asc(achievements.id)]
+      : [desc(achievements.completionDate), desc(achievements.id)];
 
     const rows = await db
       .select({
@@ -89,7 +109,7 @@ export async function GET(request: NextRequest) {
       .from(achievements)
       .leftJoin(assets, eq(assets.achievementId, achievements.id))
       .where(and(...conditions))
-      .orderBy(desc(achievements.completionDate), desc(achievements.id))
+      .orderBy(...orderClause)
       .limit(limit + 1);
 
     const hasMore = rows.length > limit;

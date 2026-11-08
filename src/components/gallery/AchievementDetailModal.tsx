@@ -29,7 +29,10 @@ function getFocusableElements(container: HTMLElement): HTMLElement[] {
     container.querySelectorAll<HTMLElement>(
       'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
     )
-  );
+  ).filter((element) => {
+    if (element.closest('[inert]')) return false;
+    return element.getClientRects().length > 0;
+  });
 }
 
 interface AchievementDetailModalProps {
@@ -83,6 +86,7 @@ export function AchievementDetailModal({
   const [collectionMessage, setCollectionMessage] = useState<string | null>(null);
   const [addingToCollection, setAddingToCollection] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
@@ -359,12 +363,33 @@ export function AchievementDetailModal({
   const wasOpenRef = useRef(false);
   const wasViewerOpenRef = useRef(false);
 
+  const isModalActive = Boolean(achievement);
+  useEffect(() => {
+    if (!isModalActive) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isModalActive]);
+
+  useEffect(() => {
+    setDownloadError(null);
+  }, [achievement?.id]);
+
   useEffect(() => {
     if (!achievement) {
       if (wasOpenRef.current) {
         wasOpenRef.current = false;
-        if (triggerRef.current && typeof triggerRef.current.focus === 'function') {
-          triggerRef.current.focus();
+        let target = triggerRef.current;
+        if (!target || !target.isConnected) {
+          target =
+            document.querySelector<HTMLElement>('.gallery-grid') ||
+            document.querySelector<HTMLElement>('.gallery-main') ||
+            null;
+        }
+        if (target && typeof target.focus === 'function') {
+          target.focus({ preventScroll: true });
         }
         triggerRef.current = null;
       }
@@ -374,8 +399,15 @@ export function AchievementDetailModal({
     if (!wasOpenRef.current) {
       wasOpenRef.current = true;
       triggerRef.current = document.activeElement as HTMLElement;
-    } else {
-      return;
+    }
+
+    // Dynamic return focus: update return focus target when navigating between artworks
+    const cardTrigger =
+      document.querySelector<HTMLElement>(`[data-achievement-id="${achievement.id}"] .gallery-card-trigger`) ||
+      document.querySelector<HTMLElement>(`[data-achievement-id="${achievement.id}"][role="button"]`) ||
+      document.querySelector<HTMLElement>(`[data-achievement-id="${achievement.id}"]`);
+    if (cardTrigger) {
+      triggerRef.current = cardTrigger;
     }
 
     const timer = setTimeout(() => {
@@ -445,18 +477,20 @@ export function AchievementDetailModal({
         if (focusables.length === 0) return;
         const first = focusables[0];
         const last = focusables[focusables.length - 1];
+        if (!first || !last) return;
 
-        if (first && last) {
-          if (e.shiftKey) {
-            if (document.activeElement === first) {
-              e.preventDefault();
-              last.focus();
-            }
-          } else {
-            if (document.activeElement === last) {
-              e.preventDefault();
-              first.focus();
-            }
+        const active = document.activeElement;
+        const activeInside = active instanceof Node && focusContainer.contains(active);
+
+        if (e.shiftKey) {
+          if (!activeInside || active === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (!activeInside || active === last) {
+            e.preventDefault();
+            first.focus();
           }
         }
       }
@@ -609,6 +643,7 @@ export function AchievementDetailModal({
     const generation = identityRef.current.generation;
     setDownloading(true);
     setError(null);
+    setDownloadError(null);
     try {
       const res = await fetch(`/api/achievements/${achievement.id}/assets?type=original&download=true`);
       if (generation !== identityRef.current.generation) return;
@@ -616,7 +651,10 @@ export function AchievementDetailModal({
         onSessionExpired?.();
         return;
       }
-      if (!res.ok) throw new Error('Failed to obtain download URL');
+      if (!res.ok) {
+        const errorData = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(errorData.error || 'Failed to obtain download URL. Please retry.');
+      }
       const data = (await res.json()) as { url?: string };
       if (generation !== identityRef.current.generation) return;
       if (data.url) {
@@ -629,7 +667,11 @@ export function AchievementDetailModal({
         document.body.removeChild(link);
       }
     } catch (err: unknown) {
-      if (generation === identityRef.current.generation) setError(err instanceof Error ? err.message : 'Download failed');
+      if (generation === identityRef.current.generation) {
+        const message = err instanceof Error ? err.message : 'Download failed. Please retry.';
+        setDownloadError(message);
+        setError(message);
+      }
     } finally {
       if (generation === identityRef.current.generation) setDownloading(false);
     }
@@ -867,6 +909,7 @@ export function AchievementDetailModal({
       }}
     >
       <div
+        className="gallery-modal-dialog"
         inert={viewerOpen || Boolean(pendingDestination) || undefined}
         onFocusCapture={(event) => {
           if (event.target instanceof HTMLElement) lastFocusRef.current = event.target;
@@ -1357,6 +1400,40 @@ export function AchievementDetailModal({
                   >
                     📥 {downloading ? 'Preparing download...' : 'Download Original Asset'}
                   </button>
+
+                  {downloadError && (
+                    <div
+                      role="alert"
+                      className="gallery-download-error"
+                      style={{
+                        padding: '10px 14px',
+                        backgroundColor: '#fef2f2',
+                        border: '1px solid #fecaca',
+                        borderRadius: 6,
+                        color: '#991b1b',
+                        fontSize: '13px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                      }}
+                    >
+                      <span>{downloadError}</span>
+                      <button
+                        type="button"
+                        onClick={() => void handleDownloadOriginal()}
+                        className="gallery-button gallery-button-danger"
+                        style={{
+                          padding: '4px 10px',
+                          fontSize: '12px',
+                          minHeight: 32,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Retry download
+                      </button>
+                    </div>
+                  )}
 
                   <div style={{ display: 'flex', gap: 10 }}>
                     <button

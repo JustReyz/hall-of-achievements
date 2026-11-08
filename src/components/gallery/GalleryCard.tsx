@@ -69,7 +69,11 @@ export function GalleryCard({
   }, [achievement.id, achievement.updatedAt]);
 
   return (
-    <div className="gallery-card" data-selected={selected ? 'true' : 'false'}>
+    <div
+      className="gallery-card"
+      data-selected={selected ? 'true' : 'false'}
+      data-achievement-id={achievement.id}
+    >
       {selectable && (
         <label
           className="gallery-card-select"
@@ -91,6 +95,7 @@ export function GalleryCard({
 
       <article
         className="gallery-card-trigger"
+        data-achievement-id={achievement.id}
         tabIndex={0}
         role="button"
         aria-label={`View achievement: ${achievement.title}, completed ${achievement.completionDate}`}

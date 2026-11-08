@@ -1,6 +1,7 @@
-import { eq, and, gt, isNull, ne, sql } from 'drizzle-orm';
+import crypto from 'node:crypto';
+import { eq, and, or, gt, lt, lte, isNull, ne, sql } from 'drizzle-orm';
 import { AppDatabase } from '../db';
-import { uploadIntents, assets, UploadIntent } from '../db/schema';
+import { uploadIntents, assets, authState, UploadIntent } from '../db/schema';
 
 export const DEFAULT_PROVIDER_ALLOWANCE_BYTES = 1024 * 1024 * 1024; // 1 GiB (1,073,741,824 bytes)
 export const STORAGE_CEILING_RATIO = 0.70; // 70% storage ceiling
@@ -52,6 +53,8 @@ export interface QuotaStats {
   activeIntentCount: number;
 }
 
+export type DbClient = AppDatabase | Parameters<Parameters<AppDatabase['transaction']>[0]>[0];
+
 /**
  * Calculates current storage metrics against the 70% ceiling.
  *
@@ -59,7 +62,7 @@ export interface QuotaStats {
  * derivative allowance, superseded versions awaiting cleanup, active
  * reservations, and quarantine files whose deletion has not been confirmed.
  */
-export async function getStorageQuotaStats(db: AppDatabase): Promise<QuotaStats> {
+export async function getStorageQuotaStats(db: DbClient): Promise<QuotaStats> {
   const now = new Date();
   const allowance = getProviderAllowanceBytes();
   const ceiling = getStorageCeilingBytes();
@@ -96,7 +99,7 @@ export async function getStorageQuotaStats(db: AppDatabase): Promise<QuotaStats>
       )
     );
 
-  // 3. Quarantine files that outlived their intent because the delete failed.
+  // 3. Quarantine files that outlived their intent or expired without cleanup.
   // Their reservation stays counted until the removal is confirmed.
   const orphanResult = await db
     .select({
@@ -105,7 +108,10 @@ export async function getStorageQuotaStats(db: AppDatabase): Promise<QuotaStats>
     .from(uploadIntents)
     .where(
       and(
-        ne(uploadIntents.status, 'pending'),
+        or(
+          ne(uploadIntents.status, 'pending'),
+          lte(uploadIntents.expiresAt, now)
+        ),
         isNull(uploadIntents.quarantineCleanedAt)
       )
     );
@@ -131,7 +137,9 @@ export async function getStorageQuotaStats(db: AppDatabase): Promise<QuotaStats>
 }
 
 /**
- * Atomically checks quota ceiling & concurrency bounds, and creates a pending upload intent.
+ * Atomically checks quota ceiling & concurrency bounds in a transaction,
+ * serializes across instances via auth_state row lock, auto-expires stale intents,
+ * and creates a pending upload intent.
  */
 export async function reserveUploadQuota(
   db: AppDatabase,
@@ -142,49 +150,66 @@ export async function reserveUploadQuota(
     declaredSize: number;
   }
 ): Promise<UploadIntent> {
-  const stats = await getStorageQuotaStats(db);
-
-  // 1. Check concurrent intent bound (at most 3 active intents)
-  if (stats.activeIntentCount >= MAX_CONCURRENT_INTENTS) {
-    throw new QuotaError(
-      'TOO_MANY_CONCURRENT_INTENTS',
-      `Maximum of ${MAX_CONCURRENT_INTENTS} active upload intents in progress. Finalize or let existing uploads expire.`,
-      429
-    );
-  }
-
-  // 2. Check 70% storage ceiling with the 12 MiB reservation
-  if (stats.totalAccountedBytes + RESERVED_BYTES_PER_INTENT > stats.ceilingBytes) {
-    throw new QuotaError(
-      'STORAGE_QUOTA_EXCEEDED',
-      `Storage quota ceiling (${(stats.ceilingBytes / 1024 / 1024).toFixed(1)} MB) exceeded. Available: ${(stats.remainingCeilingBytes / 1024 / 1024).toFixed(1)} MB, Required: ${(RESERVED_BYTES_PER_INTENT / 1024 / 1024).toFixed(1)} MB.`,
-      507
-    );
-  }
-
   const intentId = crypto.randomUUID();
   const ext = params.mimeType === 'image/jpeg' ? 'jpg' : params.mimeType === 'image/png' ? 'png' : 'webp';
   const quarantineKey = `quarantine/${intentId}.${ext}`;
+  const now = new Date();
   const expiresAt = new Date(Date.now() + INTENT_EXPIRY_MS);
 
-  const rows = await db
-    .insert(uploadIntents)
-    .values({
-      id: intentId,
-      tokenHash: params.tokenHash,
-      fileName: params.fileName,
-      mimeType: params.mimeType,
-      declaredSize: params.declaredSize,
-      reservedBytes: RESERVED_BYTES_PER_INTENT,
-      quarantineKey,
-      status: 'pending',
-      expiresAt,
-    })
-    .returning();
+  return await db.transaction(async (tx) => {
+    // 1. Acquire coordinator row lock across serverless instances to serialize reservation decisions
+    await tx
+      .select({ id: authState.id })
+      .from(authState)
+      .where(eq(authState.id, 1))
+      .for('update');
 
-  if (!rows[0]) {
-    throw new Error('Failed to insert upload intent');
-  }
+    // 2. Auto-expire stale pending intents
+    await tx
+      .update(uploadIntents)
+      .set({ status: 'expired' })
+      .where(and(eq(uploadIntents.status, 'pending'), lt(uploadIntents.expiresAt, now)));
 
-  return rows[0];
+    // 3. Re-calculate quota within locked transaction
+    const stats = await getStorageQuotaStats(tx);
+
+    // 4. Check concurrent intent bound (at most 3 active intents)
+    if (stats.activeIntentCount >= MAX_CONCURRENT_INTENTS) {
+      throw new QuotaError(
+        'TOO_MANY_CONCURRENT_INTENTS',
+        `Maximum of ${MAX_CONCURRENT_INTENTS} active upload intents in progress. Finalize or let existing uploads expire.`,
+        429
+      );
+    }
+
+    // 5. Check 70% storage ceiling with the 12 MiB reservation
+    if (stats.totalAccountedBytes + RESERVED_BYTES_PER_INTENT > stats.ceilingBytes) {
+      throw new QuotaError(
+        'STORAGE_QUOTA_EXCEEDED',
+        `Storage quota ceiling (${(stats.ceilingBytes / 1024 / 1024).toFixed(1)} MB) exceeded. Available: ${(stats.remainingCeilingBytes / 1024 / 1024).toFixed(1)} MB, Required: ${(RESERVED_BYTES_PER_INTENT / 1024 / 1024).toFixed(1)} MB.`,
+        507
+      );
+    }
+
+    const rows = await tx
+      .insert(uploadIntents)
+      .values({
+        id: intentId,
+        tokenHash: params.tokenHash,
+        fileName: params.fileName,
+        mimeType: params.mimeType,
+        declaredSize: params.declaredSize,
+        reservedBytes: RESERVED_BYTES_PER_INTENT,
+        quarantineKey,
+        status: 'pending',
+        expiresAt,
+      })
+      .returning();
+
+    if (!rows[0]) {
+      throw new Error('Failed to insert upload intent');
+    }
+
+    return rows[0];
+  });
 }

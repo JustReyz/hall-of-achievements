@@ -195,3 +195,22 @@ export function validateTags(tags: unknown): string[] {
 
   return Array.from(normalizedSet);
 }
+
+export type AchievementSort = 'newest' | 'oldest';
+
+export function validateAchievementSort(sort: unknown): AchievementSort {
+  if (sort === undefined || sort === null || sort === '') {
+    return 'newest';
+  }
+
+  if (typeof sort !== 'string') {
+    throw new ValidationError('INVALID_SORT', 'Sort must be either "newest" or "oldest".');
+  }
+
+  const normalized = sort.trim().toLowerCase();
+  if (normalized !== 'newest' && normalized !== 'oldest') {
+    throw new ValidationError('INVALID_SORT', 'Sort must be either "newest" or "oldest".');
+  }
+
+  return normalized as AchievementSort;
+}
