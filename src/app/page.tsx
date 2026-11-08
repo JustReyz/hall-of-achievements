@@ -971,22 +971,43 @@ export default function HomePage() {
           <div className="gallery-search"><SearchBar onSearch={handleSearch} /></div>
           <div className="gallery-toolbar-controls" role="toolbar" aria-label="Gallery display controls">
             <div className="gallery-control-group">
-              <label htmlFor="gallery-sort-select" className="gallery-control-label">
-                Sort:
-              </label>
-              <select
-                id="gallery-sort-select"
-                className="gallery-select"
-                value={filters.sort || 'newest'}
-                onChange={(e) => handleSortChange(e.target.value as AchievementSort)}
-                aria-label="Sort order"
-              >
-                <option value="newest">Newest first</option>
-                <option value="oldest">Oldest first</option>
-              </select>
+              <span className="gallery-control-label" id="sort-label">Sort</span>
+              <details className="gallery-sort" onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false;
+              }} onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.currentTarget.open = false;
+                  event.currentTarget.querySelector('summary')?.focus();
+                }
+              }}>
+                <summary className="gallery-sort-trigger" aria-labelledby="sort-label sort-value">
+                  <span id="sort-value">{filters.sort === 'oldest' ? 'Oldest first' : 'Newest first'}</span>
+                  <span className="gallery-sort-chevron" aria-hidden="true" />
+                </summary>
+                <div className="gallery-sort-menu" role="group" aria-label="Sort order">
+                  {(['newest', 'oldest'] as const).map((sort) => (
+                    <button
+                      key={sort}
+                      type="button"
+                      className="gallery-sort-option"
+                      aria-pressed={(filters.sort || 'newest') === sort}
+                      onClick={(event) => {
+                        handleSortChange(sort);
+                        const menu = event.currentTarget.closest('details');
+                        if (menu) {
+                          menu.open = false;
+                          menu.querySelector('summary')?.focus();
+                        }
+                      }}
+                    >
+                      {sort === 'newest' ? 'Newest first' : 'Oldest first'}
+                    </button>
+                  ))}
+                </div>
+              </details>
             </div>
             <div className="gallery-control-group gallery-density-group" role="group" aria-label="Gallery density">
-              <span className="gallery-control-label" id="density-label">Density:</span>
+              <span className="gallery-control-label" id="density-label">Density</span>
               <div className="gallery-density-buttons" role="radiogroup" aria-labelledby="density-label">
                 <button
                   type="button"
