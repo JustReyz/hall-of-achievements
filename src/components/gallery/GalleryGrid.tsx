@@ -1,6 +1,6 @@
 'use client';
 
-import { AchievementItem } from './types';
+import { AchievementItem, GalleryDensity } from './types';
 import { GalleryCard } from './GalleryCard';
 import { CONTACT_SHEET_MAX_ITEMS } from '@/lib/image/contact-sheet';
 
@@ -9,6 +9,7 @@ interface GalleryGridProps {
   loading: boolean;
   hasMore: boolean;
   hasActiveFilters: boolean;
+  density?: GalleryDensity;
   onLoadMore: () => void;
   onSelectAchievement: (item: AchievementItem) => void;
   onOpenAddModal?: () => void;
@@ -22,6 +23,7 @@ export function GalleryGrid({
   loading,
   hasMore,
   hasActiveFilters,
+  density = 'comfortable',
   onLoadMore,
   onSelectAchievement,
   onOpenAddModal,
@@ -66,7 +68,12 @@ export function GalleryGrid({
 
   return (
     <div>
-      <div role="region" aria-label="Achievements collection" className="gallery-grid">
+      <div
+        role="region"
+        aria-label="Achievements collection"
+        className="gallery-grid"
+        data-density={density || 'comfortable'}
+      >
         {items.map((item) => (
           <GalleryCard
             key={item.id}

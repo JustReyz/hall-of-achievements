@@ -398,10 +398,19 @@ export function AddAchievementModal({
     if (!isOpen) return;
 
     const timer = setTimeout(() => {
-      if (modalRef.current && !document.querySelector('dialog[open]') && !modalRef.current.contains(document.activeElement)) {
-        const focusables = modalRef.current.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-        );
+      if (
+        modalRef.current &&
+        !document.querySelector('dialog[open]') &&
+        !modalRef.current.contains(document.activeElement)
+      ) {
+        const focusables = Array.from(
+          modalRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+        ).filter((element) => {
+          if (element.closest('[inert]')) return false;
+          return element.getClientRects().length > 0;
+        });
         focusables[0]?.focus();
       }
     }, 50);
@@ -419,18 +428,24 @@ export function AddAchievementModal({
           modalRef.current.querySelectorAll<HTMLElement>(
             'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
           )
-        );
+        ).filter((element) => {
+          if (element.closest('[inert]')) return false;
+          return element.getClientRects().length > 0;
+        });
         if (focusables.length === 0) return;
         const first = focusables[0];
         const last = focusables[focusables.length - 1];
         if (!first || !last) return;
 
+        const active = document.activeElement;
+        const activeInside = active instanceof Node && modalRef.current.contains(active);
+
         if (event.shiftKey) {
-          if (document.activeElement === first) {
+          if (!activeInside || active === first) {
             event.preventDefault();
             last.focus();
           }
-        } else if (document.activeElement === last) {
+        } else if (!activeInside || active === last) {
           event.preventDefault();
           first.focus();
         }
@@ -469,6 +484,7 @@ export function AddAchievementModal({
     >
       <div
         ref={modalRef}
+        className="gallery-modal-dialog"
         inert={confirmation || undefined}
         onFocusCapture={(event) => {
           if (event.target instanceof HTMLElement) lastFocusRef.current = event.target;

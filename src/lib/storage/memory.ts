@@ -7,6 +7,7 @@ import {
   StorageError,
   StorageNotFoundError,
 } from './adapter';
+import { signStorageCapability } from './capabilities';
 
 export class MemoryStorageAdapter implements StorageAdapter {
   readonly providerName = 'memory' as const;
@@ -65,8 +66,14 @@ export class MemoryStorageAdapter implements StorageAdapter {
     expiresInSeconds: number
   ): Promise<SignedUploadUrlResult> {
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
+    const expires = expiresAt.getTime();
+    const sig = signStorageCapability({
+      action: 'write',
+      key,
+      expiresAt: expires,
+    });
     return {
-      uploadUrl: `/api/mock-storage/upload?key=${encodeURIComponent(key)}&expires=${expiresAt.getTime()}`,
+      uploadUrl: `/api/mock-storage/upload?key=${encodeURIComponent(key)}&expires=${expires}&sig=${sig}`,
       key,
       expiresAt,
     };
@@ -78,9 +85,17 @@ export class MemoryStorageAdapter implements StorageAdapter {
     options?: { downloadFilename?: string; contentType?: string }
   ): Promise<SignedDownloadUrlResult> {
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
+    const expires = expiresAt.getTime();
+    const sig = signStorageCapability({
+      action: 'read',
+      key,
+      expiresAt: expires,
+      downloadFilename: options?.downloadFilename,
+    });
     const query = new URLSearchParams({
       key,
-      expires: expiresAt.getTime().toString(),
+      expires: expires.toString(),
+      sig,
     });
     if (options?.downloadFilename) {
       query.set('download', options.downloadFilename);
