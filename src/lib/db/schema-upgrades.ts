@@ -7,6 +7,8 @@ interface UpgradeClient {
 // existing schemas, and the migration entry point must surface any failure.
 const ARCHIVE_SCHEMA_UPGRADES = [
   `ALTER TABLE achievements
+    ADD COLUMN IF NOT EXISTS image_description TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE achievements
     ADD COLUMN IF NOT EXISTS thumbnail_position_x REAL NOT NULL DEFAULT 0.5`,
   `ALTER TABLE achievements
     ADD COLUMN IF NOT EXISTS thumbnail_position_y REAL NOT NULL DEFAULT 0.5`,

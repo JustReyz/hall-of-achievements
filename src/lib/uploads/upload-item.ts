@@ -1,13 +1,7 @@
 import type { AchievementItem } from '@/components/gallery/types';
 
 export type UploadStage =
-  | 'editing'
-  | 'queued'
-  | 'uploading'
-  | 'finalizing'
-  | 'unknown'
-  | 'failed'
-  | 'succeeded';
+  'editing' | 'queued' | 'uploading' | 'finalizing' | 'unknown' | 'failed' | 'succeeded';
 
 export interface UploadQueueItem {
   id: string;
@@ -15,6 +9,7 @@ export interface UploadQueueItem {
   title: string;
   completionDate: string;
   notes: string;
+  imageDescription: string;
   tags: string[];
   stage: UploadStage;
   intentId: string | null;
@@ -95,6 +90,7 @@ export function createQueueItem(
     title: suggestedTitle(file),
     completionDate: options.completionDate,
     notes: '',
+    imageDescription: '',
     tags: [],
     stage: 'queued',
     intentId: null,
@@ -160,9 +156,14 @@ async function requestIntent(item: UploadQueueItem, deps: UploadDeps) {
   const data = await readJson(response);
 
   if (response.status === 401) {
-    throw new UploadQueueError('UNAUTHENTICATED', 'Your session expired. Unlock the archive and retry.', 'queued', {
-      sessionExpired: true,
-    });
+    throw new UploadQueueError(
+      'UNAUTHENTICATED',
+      'Your session expired. Unlock the archive and retry.',
+      'queued',
+      {
+        sessionExpired: true,
+      }
+    );
   }
 
   if (!response.ok || typeof data.intentId !== 'string' || typeof data.uploadUrl !== 'string') {
@@ -180,7 +181,11 @@ async function requestIntent(item: UploadQueueItem, deps: UploadDeps) {
 
 async function uploadBytes(item: UploadQueueItem, deps: UploadDeps): Promise<void> {
   if (!item.uploadUrl) {
-    throw new UploadQueueError('UPLOAD_FAILED', 'This upload has no storage target. Retry the item.', 'queued');
+    throw new UploadQueueError(
+      'UPLOAD_FAILED',
+      'This upload has no storage target. Retry the item.',
+      'queued'
+    );
   }
 
   let response: Response;
@@ -220,6 +225,7 @@ async function finalizeItem(item: UploadQueueItem, deps: UploadDeps): Promise<Ac
         title: item.title.trim(),
         completionDate: item.completionDate,
         notes: item.notes.trim(),
+        imageDescription: item.imageDescription.trim(),
         tags: item.tags,
         timezone: deps.timezone,
       }),
@@ -235,13 +241,24 @@ async function finalizeItem(item: UploadQueueItem, deps: UploadDeps): Promise<Ac
   const data = await readJson(response);
 
   if (response.status === 401) {
-    throw new UploadQueueError('UNAUTHENTICATED', 'Your session expired. Unlock the archive and retry.', 'queued', {
-      sessionExpired: true,
-    });
+    throw new UploadQueueError(
+      'UNAUTHENTICATED',
+      'Your session expired. Unlock the archive and retry.',
+      'queued',
+      {
+        sessionExpired: true,
+      }
+    );
   }
 
-  if (response.ok && typeof data.achievement === 'object' && data.achievement !== null
-    && 'id' in data.achievement && typeof data.achievement.id === 'string' && data.achievement.id) {
+  if (
+    response.ok &&
+    typeof data.achievement === 'object' &&
+    data.achievement !== null &&
+    'id' in data.achievement &&
+    typeof data.achievement.id === 'string' &&
+    data.achievement.id
+  ) {
     return data.achievement as AchievementItem;
   }
 
@@ -259,13 +276,19 @@ async function finalizeItem(item: UploadQueueItem, deps: UploadDeps): Promise<Ac
   if (code === 'UPLOAD_NOT_FOUND') {
     // Storage read failures share this code, so a recovered intent cannot safely be replaced yet.
     if (!item.uploadUrl) {
-      throw new UploadQueueError(code, 'The existing upload could not be read. Its intent is kept to avoid duplicates. Retry later; if the bytes are missing, wait for the intent to expire before uploading again.', 'unknown');
+      throw new UploadQueueError(
+        code,
+        'The existing upload could not be read. Its intent is kept to avoid duplicates. Retry later; if the bytes are missing, wait for the intent to expire before uploading again.',
+        'unknown'
+      );
     }
     throw new UploadQueueError(code, message, 'queued');
   }
 
-  if (((code === 'INTENT_EXPIRED' || code === 'INTENT_CLEANED') && response.status === 410)
-    || (code === 'NOT_FOUND' && response.status === 404 && message === 'Upload intent not found')) {
+  if (
+    ((code === 'INTENT_EXPIRED' || code === 'INTENT_CLEANED') && response.status === 410) ||
+    (code === 'NOT_FOUND' && response.status === 404 && message === 'Upload intent not found')
+  ) {
     throw new UploadQueueError(
       code,
       'This upload expired before it was finalized. Retrying sends it again with a new upload intent.',
@@ -308,7 +331,12 @@ export async function runUploadItem(
     if (!current.intentId) {
       current = { ...current, stage: 'uploading' };
       const intent = await requestIntent(current, deps);
-      current = { ...current, intentId: intent.intentId, uploadUrl: intent.uploadUrl, stage: 'queued' };
+      current = {
+        ...current,
+        intentId: intent.intentId,
+        uploadUrl: intent.uploadUrl,
+        stage: 'queued',
+      };
     } else if (!current.uploadUrl) {
       // Saved drafts omit short-lived URLs; reconcile the original intent before replacing it.
       current = { ...current, stage: 'unknown' };

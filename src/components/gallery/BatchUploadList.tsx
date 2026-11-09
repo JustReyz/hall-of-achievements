@@ -7,7 +7,9 @@ interface BatchUploadListProps {
   running: boolean;
   onEdit: (
     id: string,
-    patch: Partial<Pick<UploadQueueItem, 'title' | 'completionDate' | 'notes' | 'tags'>>
+    patch: Partial<
+      Pick<UploadQueueItem, 'title' | 'completionDate' | 'notes' | 'imageDescription' | 'tags'>
+    >
   ) => void;
   onRetry: (id: string) => void;
   onRemove: (id: string) => void;
@@ -60,17 +62,29 @@ function fileSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(2)} MiB`;
 }
 
-export function BatchUploadList({ items, running, onEdit, onRetry, onRemove }: BatchUploadListProps) {
+export function BatchUploadList({
+  items,
+  running,
+  onEdit,
+  onRetry,
+  onRemove,
+}: BatchUploadListProps) {
   if (items.length === 0) return null;
 
   return (
     <ul style={{ listStyle: 'none', margin: '0 0 18px 0', padding: 0, display: 'grid', gap: 12 }}>
       {items.map((item) => {
         const tone = stageTone(item.stage);
-        const locked = running || item.stage === 'succeeded' || item.stage === 'uploading' || item.stage === 'finalizing';
+        const locked =
+          running ||
+          item.stage === 'succeeded' ||
+          item.stage === 'uploading' ||
+          item.stage === 'finalizing';
         const metadataLocked = locked || item.intentId !== null;
         const canRemove = !locked;
-        const canRetry = !running && (item.stage === 'queued' || item.stage === 'unknown' || item.stage === 'failed');
+        const canRetry =
+          !running &&
+          (item.stage === 'queued' || item.stage === 'unknown' || item.stage === 'failed');
 
         return (
           <li
@@ -78,7 +92,12 @@ export function BatchUploadList({ items, running, onEdit, onRetry, onRemove }: B
             data-upload-item
             data-stage={item.stage}
             className="gallery-upload-row"
-            style={{ padding: 12, border: '1px solid #e2e8f0', borderRadius: 8, backgroundColor: '#fff' }}
+            style={{
+              padding: 12,
+              border: '1px solid #e2e8f0',
+              borderRadius: 8,
+              backgroundColor: '#fff',
+            }}
           >
             <div
               style={{
@@ -91,7 +110,14 @@ export function BatchUploadList({ items, running, onEdit, onRetry, onRemove }: B
               }}
             >
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a', overflowWrap: 'anywhere' }}>
+                <div
+                  style={{
+                    fontWeight: 600,
+                    fontSize: 14,
+                    color: '#0f172a',
+                    overflowWrap: 'anywhere',
+                  }}
+                >
                   {item.title.trim() || item.file.name}
                 </div>
                 <div style={{ fontSize: 12, color: '#64748b', overflowWrap: 'anywhere' }}>
@@ -115,10 +141,26 @@ export function BatchUploadList({ items, running, onEdit, onRetry, onRemove }: B
             </div>
 
             {item.error && (
-              <p role="alert" style={{ margin: '0 0 10px 0', fontSize: 13, color: '#991b1b', lineHeight: 1.5 }}>
+              <p
+                role="alert"
+                style={{ margin: '0 0 10px 0', fontSize: 13, color: '#991b1b', lineHeight: 1.5 }}
+              >
                 {item.error}
               </p>
             )}
+
+            <label htmlFor={`upload-description-${item.id}`} style={labelStyle}>
+              Image description ({item.imageDescription.length}/500)
+            </label>
+            <textarea
+              id={`upload-description-${item.id}`}
+              maxLength={500}
+              value={item.imageDescription}
+              disabled={metadataLocked}
+              onChange={(event) => onEdit(item.id, { imageDescription: event.target.value })}
+              rows={2}
+              style={inputStyle}
+            />
 
             {item.duplicateCheck === 'checking' && (
               <p role="status" style={{ margin: '0 0 10px', fontSize: 13, color: '#53645e' }}>
@@ -126,8 +168,21 @@ export function BatchUploadList({ items, running, onEdit, onRetry, onRemove }: B
               </p>
             )}
             {item.duplicateMatches && item.duplicateMatches.length > 0 && (
-              <p role="status" style={{ margin: '0 0 10px', padding: 10, background: '#f4f5f1', fontSize: 13, lineHeight: 1.5 }}>
-                This file is byte-for-byte identical to {item.duplicateMatches.map((match) => `“${match.title}” (${match.completionDate})`).join(', ')}. You can still save it as a separate achievement.
+              <p
+                role="status"
+                style={{
+                  margin: '0 0 10px',
+                  padding: 10,
+                  background: '#f4f5f1',
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                }}
+              >
+                This file is byte-for-byte identical to{' '}
+                {item.duplicateMatches
+                  .map((match) => `“${match.title}” (${match.completionDate})`)
+                  .join(', ')}
+                . You can still save it as a separate achievement.
               </p>
             )}
             {item.duplicateCheck === 'unavailable' && (
@@ -136,7 +191,13 @@ export function BatchUploadList({ items, running, onEdit, onRetry, onRemove }: B
               </p>
             )}
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                gap: 10,
+              }}
+            >
               <div style={{ gridColumn: '1 / -1' }}>
                 <label htmlFor={`upload-title-${item.id}`} style={labelStyle}>
                   Title ({item.title.length}/120)

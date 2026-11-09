@@ -23,7 +23,10 @@ import {
 export const authState = pgTable('auth_state', {
   id: integer('id').primaryKey().default(1),
   currentVersion: text('current_version').notNull(),
-  rotationMetadata: jsonb('rotation_metadata').$type<Record<string, unknown>>().notNull().default({}),
+  rotationMetadata: jsonb('rotation_metadata')
+    .$type<Record<string, unknown>>()
+    .notNull()
+    .default({}),
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 });
 
@@ -36,7 +39,9 @@ export const sessions = pgTable(
     tokenHash: text('token_hash').primaryKey(),
     authStateVersion: text('auth_state_version').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
-    lastAccessedAt: timestamp('last_accessed_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    lastAccessedAt: timestamp('last_accessed_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
     idleExpiresAt: timestamp('idle_expires_at', { withTimezone: true, mode: 'date' }).notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
     revoked: boolean('revoked').notNull().default(false),
@@ -57,13 +62,13 @@ export const rateLimits = pgTable(
     key: text('key').primaryKey(),
     scope: text('scope').notNull().default('login_ip'),
     attemptCount: integer('attempt_count').notNull().default(1),
-    windowStart: timestamp('window_start', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    windowStart: timestamp('window_start', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
     blockedUntil: timestamp('blocked_until', { withTimezone: true, mode: 'date' }),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
-  (table) => [
-    index('idx_rate_limits_window').on(table.windowStart),
-  ]
+  (table) => [index('idx_rate_limits_window').on(table.windowStart)]
 );
 
 export type AuthState = typeof authState.$inferSelect;
@@ -85,21 +90,15 @@ export const achievements = pgTable(
     title: varchar('title', { length: 120 }).notNull(),
     completionDate: date('completion_date').notNull(),
     notes: text('notes'),
+    imageDescription: text('image_description').notNull().default(''),
     tags: jsonb('tags').$type<string[]>().notNull().default([]),
     thumbnailPositionX: real('thumbnail_position_x').notNull().default(0.5),
     thumbnailPositionY: real('thumbnail_position_y').notNull().default(0.5),
-    state: text('state')
-      .$type<'pending' | 'ready' | 'deleting'>()
-      .notNull()
-      .default('pending'),
+    state: text('state').$type<'pending' | 'ready' | 'deleting'>().notNull().default('pending'),
     /** Set when the owner moves a finished artwork to Trash. */
     trashedAt: timestamp('trashed_at', { withTimezone: true, mode: 'date' }),
-    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
-      .notNull()
-      .defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (table) => [
     check(
@@ -150,9 +149,7 @@ export const assets = pgTable(
     height: integer('height').notNull(),
     checksum: varchar('checksum', { length: 64 }).notNull(),
     retiredObjects: jsonb('retired_objects').$type<RetiredObject[]>().notNull().default([]),
-    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
-      .notNull()
-      .defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (table) => [
     index('idx_assets_achievement_id').on(table.achievementId),
@@ -167,7 +164,9 @@ export const uploadIntents = pgTable(
   'upload_intents',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    achievementId: uuid('achievement_id').references(() => achievements.id, { onDelete: 'cascade' }),
+    achievementId: uuid('achievement_id').references(() => achievements.id, {
+      onDelete: 'cascade',
+    }),
     tokenHash: varchar('token_hash', { length: 64 }).notNull(),
     fileName: varchar('file_name', { length: 255 }).notNull(),
     mimeType: varchar('mime_type', { length: 50 }).notNull(),
@@ -181,9 +180,7 @@ export const uploadIntents = pgTable(
       .notNull()
       .default('pending'),
     expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
-      .notNull()
-      .defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (table) => [
     index('idx_upload_intents_status').on(table.status),
@@ -211,12 +208,8 @@ export const collections = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     name: varchar('name', { length: 120 }).notNull(),
     revision: integer('revision').notNull().default(0),
-    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
-      .notNull()
-      .defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (table) => [index('idx_collections_created').on(table.createdAt.desc())]
 );
@@ -258,16 +251,9 @@ export const pushSubscriptions = pgTable(
     p256dh: text('p256dh').notNull(),
     auth: text('auth').notNull(),
     userAgent: text('user_agent'),
-    status: text('status')
-      .$type<'active' | 'disabled'>()
-      .notNull()
-      .default('active'),
-    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
-      .notNull()
-      .defaultNow(),
+    status: text('status').$type<'active' | 'disabled'>().notNull().default('active'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (table) => [
     index('idx_push_subscriptions_status_created').on(table.status, table.createdAt),
@@ -291,9 +277,7 @@ export const reminderAttempts = pgTable(
     attemptedAt: timestamp('attempted_at', { withTimezone: true, mode: 'date' })
       .notNull()
       .defaultNow(),
-    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
-      .notNull()
-      .defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (table) => [
     index('idx_reminder_attempts_token_attempted').on(table.tokenHash, table.attemptedAt.desc()),
@@ -322,19 +306,11 @@ export const storageObjects = pgTable(
     })('data').notNull(),
     mimeType: text('mime_type').notNull(),
     size: integer('size').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
-      .notNull()
-      .defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
-  (table) => [
-    index('idx_storage_objects_created').on(table.createdAt),
-  ]
+  (table) => [index('idx_storage_objects_created').on(table.createdAt)]
 );
 
 export type StorageObject = typeof storageObjects.$inferSelect;
 export type InsertStorageObject = typeof storageObjects.$inferInsert;
-
-
