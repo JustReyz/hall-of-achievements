@@ -5,13 +5,7 @@ import { eq, inArray, asc } from 'drizzle-orm';
 import { getDb, type AppDatabase } from '../db';
 import { getStorage } from '../storage';
 import { StorageAdapter } from '../storage/adapter';
-import {
-  achievements,
-  assets,
-  collectionItems,
-  collections,
-  type Asset,
-} from '../db/schema';
+import { achievements, assets, collectionItems, collections, type Asset } from '../db/schema';
 
 export interface ManifestFileEntry {
   path: string;
@@ -19,7 +13,7 @@ export interface ManifestFileEntry {
   sha256: string;
 }
 
-export const ARCHIVE_VERSION = 4;
+export const ARCHIVE_VERSION = 5;
 
 export interface ExportManifest {
   version: number;
@@ -67,7 +61,9 @@ export async function exportArchive(options: ExportOptions = {}): Promise<Export
   if (fs.existsSync(targetDir)) {
     const existingEntries = fs.readdirSync(targetDir);
     if (existingEntries.length > 0 && !options.force) {
-      throw new Error(`Output directory '${targetDir}' already exists and is not empty. Pass force: true to overwrite.`);
+      throw new Error(
+        `Output directory '${targetDir}' already exists and is not empty. Pass force: true to overwrite.`
+      );
     }
   }
 
@@ -172,10 +168,7 @@ export async function exportArchive(options: ExportOptions = {}): Promise<Export
   totalSizeBytes += assetsBuf.length;
 
   // metadata/collections.json: curated membership, including trashed members
-  const collectionRows = await db
-    .select()
-    .from(collections)
-    .orderBy(asc(collections.createdAt));
+  const collectionRows = await db.select().from(collections).orderBy(asc(collections.createdAt));
   const membershipRows = await db
     .select({
       collectionId: collectionItems.collectionId,
