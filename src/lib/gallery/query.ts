@@ -34,7 +34,9 @@ export function buildGalleryConditions(filters: GalleryFilters): SQL[] {
     );
   }
 
-  if (filters.tag) {
+  if (filters.untagged) {
+    conditions.push(sql`jsonb_array_length(${achievements.tags}) = 0`);
+  } else if (filters.tag) {
     conditions.push(
       sql`${achievements.tags} @> ${JSON.stringify([filters.tag])}::jsonb`
     );

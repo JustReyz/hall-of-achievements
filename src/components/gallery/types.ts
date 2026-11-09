@@ -6,6 +6,7 @@ export interface GalleryFilters {
   from: string;
   to: string;
   tag: string;
+  untagged?: boolean;
   sort?: AchievementSort;
 }
 

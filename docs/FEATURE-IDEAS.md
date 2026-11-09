@@ -90,3 +90,9 @@ Choose how an artwork is framed in its gallery card without changing the origina
 Status: implemented 2026-11-09; concise owner-written descriptions are saved with artwork metadata and used as the viewer image alternative. Older records and archives default to an empty description, which falls back to the artwork title.
 
 Add an optional description of an artwork’s essential visual content for screen-reader users. Descriptions are limited to 500 characters and included in archive version 5.
+
+## 18. Untagged artwork filter
+
+Status: implemented 2026-11-09; the Tag Browser can show only artwork with no tags, including within a selected collection.
+
+Find finished pieces that still need organizing without changing their metadata.
