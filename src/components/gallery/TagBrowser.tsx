@@ -3,15 +3,17 @@
 interface TagBrowserProps {
   tags: string[];
   selectedTag: string;
+  selectedUntagged: boolean;
   loading: boolean;
   error: string | null;
-  onSelect: (tag: string) => void;
+  onSelect: (tag: string, untagged?: boolean) => void;
   onRetry: () => void;
 }
 
 export function TagBrowser({
   tags,
   selectedTag,
+  selectedUntagged,
   loading,
   error,
   onSelect,
@@ -35,17 +37,25 @@ export function TagBrowser({
         <button
           type="button"
           className="gallery-tag"
-          onClick={() => onSelect('')}
-          aria-pressed={selectedTag === ''}
+          onClick={() => onSelect('', false)}
+          aria-pressed={selectedTag === '' && !selectedUntagged}
         >
           All tags
+        </button>
+        <button
+          type="button"
+          className="gallery-tag"
+          onClick={() => onSelect('', true)}
+          aria-pressed={selectedUntagged}
+        >
+          Untagged
         </button>
         {visibleTags.map((tag) => (
           <button
             key={tag}
             type="button"
             className="gallery-tag"
-            onClick={() => onSelect(tag)}
+            onClick={() => onSelect(tag, false)}
             aria-pressed={selectedTag === tag}
             aria-label={`Filter by tag ${tag}`}
           >

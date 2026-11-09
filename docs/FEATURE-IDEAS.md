@@ -84,3 +84,9 @@ Collections carry a revision so stale order writes and old curated cursors are r
 Status: implemented 2026-10-27 (Phase 3); focused tests and browser checks passed.
 
 Choose how an artwork is framed in its gallery card without changing the original image.
+
+## 18. Untagged artwork filter
+
+Status: implemented 2026-11-09; the Tag Browser can show only artwork with no tags, including within a selected collection.
+
+Find finished pieces that still need organizing without changing their metadata.
