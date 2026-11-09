@@ -36,12 +36,18 @@ export function validateTitle(title: unknown): string {
 
 export function validateCalendarDate(dateStr: unknown): string {
   if (typeof dateStr !== 'string') {
-    throw new ValidationError('INVALID_COMPLETION_DATE', 'Completion date must be a string in YYYY-MM-DD format.');
+    throw new ValidationError(
+      'INVALID_COMPLETION_DATE',
+      'Completion date must be a string in YYYY-MM-DD format.'
+    );
   }
 
   const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
   if (!dateRegex.test(dateStr)) {
-    throw new ValidationError('INVALID_COMPLETION_DATE', 'Completion date must follow YYYY-MM-DD format.');
+    throw new ValidationError(
+      'INVALID_COMPLETION_DATE',
+      'Completion date must follow YYYY-MM-DD format.'
+    );
   }
 
   const parts = dateStr.split('-').map((v) => parseInt(v, 10));
@@ -50,7 +56,10 @@ export function validateCalendarDate(dateStr: unknown): string {
   const day = parts[2];
 
   if (year === undefined || month === undefined || day === undefined) {
-    throw new ValidationError('INVALID_COMPLETION_DATE', 'Completion date must follow YYYY-MM-DD format.');
+    throw new ValidationError(
+      'INVALID_COMPLETION_DATE',
+      'Completion date must follow YYYY-MM-DD format.'
+    );
   }
 
   const parsedDate = new Date(Date.UTC(year, month - 1, day));
@@ -60,7 +69,10 @@ export function validateCalendarDate(dateStr: unknown): string {
     parsedDate.getUTCMonth() !== month - 1 ||
     parsedDate.getUTCDate() !== day
   ) {
-    throw new ValidationError('INVALID_COMPLETION_DATE', 'Completion date is not a valid calendar date.');
+    throw new ValidationError(
+      'INVALID_COMPLETION_DATE',
+      'Completion date is not a valid calendar date.'
+    );
   }
 
   return dateStr;
@@ -111,7 +123,10 @@ export function validateDateRange(
   if (start) validateCalendarDate(start);
   if (end) validateCalendarDate(end);
   if (start && end && start > end) {
-    throw new ValidationError('INVALID_DATE_RANGE', 'Completed from must not be after Completed through.');
+    throw new ValidationError(
+      'INVALID_DATE_RANGE',
+      'Completed from must not be after Completed through.'
+    );
   }
   return { from: start, to: end };
 }
@@ -132,10 +147,27 @@ export function validateNotes(notes: unknown): string {
   return notes;
 }
 
+export function validateImageDescription(description: unknown): string {
+  if (description === undefined || description === null) return '';
+  if (typeof description !== 'string') {
+    throw new ValidationError('INVALID_IMAGE_DESCRIPTION', 'Image description must be a string.');
+  }
+  if (description.length > 500) {
+    throw new ValidationError(
+      'IMAGE_DESCRIPTION_TOO_LONG',
+      'Image description cannot exceed 500 characters.'
+    );
+  }
+  return description.trim();
+}
+
 function normalizeTagValue(tag: string): string {
   const normalized = tag.trim().toLowerCase();
   if (normalized.length > 24) {
-    throw new ValidationError('INVALID_TAGS', `Tag "${normalized}" exceeds the maximum length of 24 characters.`);
+    throw new ValidationError(
+      'INVALID_TAGS',
+      `Tag "${normalized}" exceeds the maximum length of 24 characters.`
+    );
   }
   return normalized;
 }

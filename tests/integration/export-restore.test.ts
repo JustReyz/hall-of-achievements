@@ -5,12 +5,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { resetDatabase, getDb } from '@/lib/db';
-import {
-  achievements,
-  assets,
-  sessions,
-  pushSubscriptions,
-} from '@/lib/db/schema';
+import { achievements, assets, sessions, pushSubscriptions } from '@/lib/db/schema';
 import { getStorage } from '@/lib/storage';
 import { MemoryStorageAdapter } from '@/lib/storage/memory';
 import { exportArchive } from '@/lib/operations/export';
@@ -62,6 +57,7 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
         title: 'Masterpiece 1: Starlit Lake',
         completionDate: '2026-05-10',
         notes: 'Oil painting on canvas with textured skies',
+        imageDescription: 'A small sailboat beneath a starry blue sky.',
         tags: ['oil', 'landscape'],
         state: 'ready',
       },
@@ -153,7 +149,7 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
     expect(exportRes.achievementsCount).toBe(2);
     expect(exportRes.assetsCount).toBe(2);
     expect(exportRes.filesCount).toBe(9); // 3 metadata + 6 binary assets
-    expect(exportRes.manifest.version).toBe(4);
+    expect(exportRes.manifest.version).toBe(5);
 
     // Verify disk structure
     const manifestPath = path.join(exportDir, 'manifest.json');
@@ -180,6 +176,12 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
     const restoreRes = await restoreArchive({ inputDir: exportDir, db, storage });
 
     expect(restoreRes.achievementsRestored).toBe(2);
+    const descriptionRows = await db
+      .select({ id: achievements.id, imageDescription: achievements.imageDescription })
+      .from(achievements);
+    expect(descriptionRows.find((row) => row.id === achId1)?.imageDescription).toBe(
+      'A small sailboat beneath a starry blue sky.'
+    );
     expect(restoreRes.assetsRestored).toBe(2);
     expect(restoreRes.filesRestored).toBe(9);
 
@@ -281,7 +283,10 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
     const storage = getStorage() as MemoryStorageAdapter;
 
     const invalidDir = createTmpDir('invalid-version');
-    fs.writeFileSync(path.join(invalidDir, 'manifest.json'), JSON.stringify({ version: 99, files: [] }));
+    fs.writeFileSync(
+      path.join(invalidDir, 'manifest.json'),
+      JSON.stringify({ version: 99, files: [] })
+    );
 
     await expect(restoreArchive({ inputDir: invalidDir, db, storage })).rejects.toThrow(
       IntegrityError
@@ -360,12 +365,18 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
     await restoreArchive({ inputDir: exportDir, db, storage });
 
     // 4. Verify post-restore security: target session was revoked, push subscription was disabled
-    const sessionRows = await db.select().from(sessions).where(eq(sessions.tokenHash, targetTokenHash));
+    const sessionRows = await db
+      .select()
+      .from(sessions)
+      .where(eq(sessions.tokenHash, targetTokenHash));
     expect(sessionRows.length).toBe(1);
     expect(sessionRows[0]?.revoked).toBe(true);
     expect(sessionRows[0]?.revokedAt).not.toBeNull();
 
-    const subRows = await db.select().from(pushSubscriptions).where(eq(pushSubscriptions.id, subId));
+    const subRows = await db
+      .select()
+      .from(pushSubscriptions)
+      .where(eq(pushSubscriptions.id, subId));
     expect(subRows.length).toBe(1);
     expect(subRows[0]?.status).toBe('disabled');
   });
@@ -408,7 +419,12 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
       const manifest = {
         version: 1,
         exportedAt: new Date().toISOString(),
-        metadata: { achievementsCount: 0, assetsCount: 0, filesCount: 3, totalSizeBytes: secretBuf.length },
+        metadata: {
+          achievementsCount: 0,
+          assetsCount: 0,
+          filesCount: 3,
+          totalSizeBytes: secretBuf.length,
+        },
         files: [
           ...baseFiles,
           {
@@ -418,7 +434,11 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
           },
         ],
       };
-      fs.writeFileSync(path.join(archiveDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+      fs.writeFileSync(
+        path.join(archiveDir, 'manifest.json'),
+        JSON.stringify(manifest, null, 2),
+        'utf-8'
+      );
 
       await expect(restoreArchive({ inputDir: archiveDir, db, storage })).rejects.toThrow(
         /traversal|invalid path|outside|escapes/i
@@ -459,7 +479,11 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
             },
           ],
         };
-        fs.writeFileSync(path.join(archiveDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+        fs.writeFileSync(
+          path.join(archiveDir, 'manifest.json'),
+          JSON.stringify(manifest, null, 2),
+          'utf-8'
+        );
 
         await expect(restoreArchive({ inputDir: archiveDir, db, storage })).rejects.toThrow(
           /traversal|invalid path|absolute|illegal|outside|escapes/i
@@ -486,7 +510,11 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
           },
         ],
       };
-      fs.writeFileSync(path.join(archiveDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+      fs.writeFileSync(
+        path.join(archiveDir, 'manifest.json'),
+        JSON.stringify(manifest, null, 2),
+        'utf-8'
+      );
 
       await expect(restoreArchive({ inputDir: archiveDir, db, storage })).rejects.toThrow(
         /traversal|invalid path|outside|escapes/i
@@ -524,7 +552,12 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
       const manifest = {
         version: 1,
         exportedAt: new Date().toISOString(),
-        metadata: { achievementsCount: 0, assetsCount: 1, filesCount: 2, totalSizeBytes: achBuf.length + astBuf.length },
+        metadata: {
+          achievementsCount: 0,
+          assetsCount: 1,
+          filesCount: 2,
+          totalSizeBytes: achBuf.length + astBuf.length,
+        },
         files: [
           {
             path: 'metadata/achievements.json',
@@ -538,7 +571,11 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
           },
         ],
       };
-      fs.writeFileSync(path.join(archiveDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+      fs.writeFileSync(
+        path.join(archiveDir, 'manifest.json'),
+        JSON.stringify(manifest, null, 2),
+        'utf-8'
+      );
 
       await expect(restoreArchive({ inputDir: archiveDir, db, storage })).rejects.toThrow(
         /traversal|disallowed storage key/i
@@ -567,7 +604,11 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
           },
         ],
       };
-      fs.writeFileSync(path.join(archiveDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+      fs.writeFileSync(
+        path.join(archiveDir, 'manifest.json'),
+        JSON.stringify(manifest, null, 2),
+        'utf-8'
+      );
 
       await expect(restoreArchive({ inputDir: archiveDir, db, storage })).rejects.toThrow(
         /null byte|control character|traversal/i
@@ -587,7 +628,12 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
       const manifest = {
         version: 1,
         exportedAt: new Date().toISOString(),
-        metadata: { achievementsCount: 0, assetsCount: 0, filesCount: 3, totalSizeBytes: backdoorBuf.length },
+        metadata: {
+          achievementsCount: 0,
+          assetsCount: 0,
+          filesCount: 3,
+          totalSizeBytes: backdoorBuf.length,
+        },
         files: [
           ...baseFiles,
           {
@@ -597,7 +643,11 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
           },
         ],
       };
-      fs.writeFileSync(path.join(archiveDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+      fs.writeFileSync(
+        path.join(archiveDir, 'manifest.json'),
+        JSON.stringify(manifest, null, 2),
+        'utf-8'
+      );
 
       await expect(restoreArchive({ inputDir: archiveDir, db, storage })).rejects.toThrow(
         /unexpected file location/i
@@ -618,7 +668,12 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
       const manifest = {
         version: 1,
         exportedAt: new Date().toISOString(),
-        metadata: { achievementsCount: 0, assetsCount: 0, filesCount: 3, totalSizeBytes: exploitBuf.length },
+        metadata: {
+          achievementsCount: 0,
+          assetsCount: 0,
+          filesCount: 3,
+          totalSizeBytes: exploitBuf.length,
+        },
         files: [
           ...baseFiles,
           {
@@ -628,7 +683,11 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
           },
         ],
       };
-      fs.writeFileSync(path.join(archiveDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+      fs.writeFileSync(
+        path.join(archiveDir, 'manifest.json'),
+        JSON.stringify(manifest, null, 2),
+        'utf-8'
+      );
 
       await expect(restoreArchive({ inputDir: archiveDir, db, storage })).rejects.toThrow(
         /disallowed storage key|originals or derivatives/i
@@ -655,7 +714,11 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
           },
         ],
       };
-      fs.writeFileSync(path.join(archiveDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+      fs.writeFileSync(
+        path.join(archiveDir, 'manifest.json'),
+        JSON.stringify(manifest, null, 2),
+        'utf-8'
+      );
 
       try {
         await restoreArchive({ inputDir: archiveDir, db, storage });
@@ -742,7 +805,11 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
           },
         ],
       };
-      fs.writeFileSync(path.join(archiveDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+      fs.writeFileSync(
+        path.join(archiveDir, 'manifest.json'),
+        JSON.stringify(manifest, null, 2),
+        'utf-8'
+      );
 
       await expect(restoreArchive({ inputDir: archiveDir, db, storage })).rejects.toThrow(
         IntegrityError
@@ -812,7 +879,11 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
           },
         ],
       };
-      fs.writeFileSync(path.join(archiveDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf-8');
+      fs.writeFileSync(
+        path.join(archiveDir, 'manifest.json'),
+        JSON.stringify(manifest, null, 2),
+        'utf-8'
+      );
 
       await expect(restoreArchive({ inputDir: archiveDir, db, storage })).rejects.toThrow(
         IntegrityError

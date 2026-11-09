@@ -69,28 +69,23 @@ export async function GET(request: NextRequest) {
         conditions.push(
           or(
             gt(achievements.completionDate, cursorDate),
-            and(
-              eq(achievements.completionDate, cursorDate),
-              gt(achievements.id, cursorId)
-            )
+            and(eq(achievements.completionDate, cursorDate), gt(achievements.id, cursorId))
           )!
         );
       } else {
         conditions.push(
           or(
             lt(achievements.completionDate, cursorDate),
-            and(
-              eq(achievements.completionDate, cursorDate),
-              lt(achievements.id, cursorId)
-            )
+            and(eq(achievements.completionDate, cursorDate), lt(achievements.id, cursorId))
           )!
         );
       }
     }
 
-    const orderClause = sort === 'oldest'
-      ? [asc(achievements.completionDate), asc(achievements.id)]
-      : [desc(achievements.completionDate), desc(achievements.id)];
+    const orderClause =
+      sort === 'oldest'
+        ? [asc(achievements.completionDate), asc(achievements.id)]
+        : [desc(achievements.completionDate), desc(achievements.id)];
 
     const rows = await db
       .select({
@@ -98,6 +93,7 @@ export async function GET(request: NextRequest) {
         title: achievements.title,
         completionDate: achievements.completionDate,
         notes: achievements.notes,
+        imageDescription: achievements.imageDescription,
         tags: achievements.tags,
         thumbnailPositionX: achievements.thumbnailPositionX,
         thumbnailPositionY: achievements.thumbnailPositionY,

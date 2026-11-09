@@ -15,6 +15,7 @@ export interface AchievementItem {
   title: string;
   completionDate: string;
   notes: string | null;
+  imageDescription?: string;
   tags: string[];
   thumbnailPositionX: number;
   thumbnailPositionY: number;

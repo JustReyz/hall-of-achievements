@@ -6,8 +6,14 @@ import { ArtworkViewer, type ViewerBackground } from './ArtworkViewer';
 import { UnsavedChangesDialog } from './UnsavedChangesDialog';
 import { useBeforeUnload } from '@/lib/drafts/use-before-unload';
 import {
-  deleteDraft, loadDraft, saveEditDraft, editValues, editsEqual, DraftConflictError,
-  type EditDraft, type EditDraftValues,
+  deleteDraft,
+  loadDraft,
+  saveEditDraft,
+  editValues,
+  editsEqual,
+  DraftConflictError,
+  type EditDraft,
+  type EditDraftValues,
 } from '@/lib/drafts/local-drafts';
 
 const RESTORE_MAX_BYTES = 10 * 1024 * 1024; // 10 MiB, matches the upload pipeline
@@ -93,6 +99,7 @@ export function AchievementDetailModal({
   const [editTitle, setEditTitle] = useState('');
   const [editDate, setEditDate] = useState('');
   const [editNotes, setEditNotes] = useState('');
+  const [editImageDescription, setEditImageDescription] = useState('');
   const [editTags, setEditTags] = useState('');
   const [editThumbnailPositionX, setEditThumbnailPositionX] = useState(0.5);
   const [editThumbnailPositionY, setEditThumbnailPositionY] = useState(0.5);
@@ -117,12 +124,18 @@ export function AchievementDetailModal({
     identityRef.current = { id: achievement?.id, generation: identityRef.current.generation + 1 };
   }
   const initializedIdRef = useRef<string | undefined>(undefined);
-  useEffect(() => () => { identityRef.current.generation += 1; }, []);
+  useEffect(
+    () => () => {
+      identityRef.current.generation += 1;
+    },
+    []
+  );
 
   const applyValues = useCallback((values: EditDraftValues) => {
     setEditTitle(values.title);
     setEditDate(values.completionDate);
     setEditNotes(values.notes);
+    setEditImageDescription(values.imageDescription);
     setEditTags(values.tags.join(', '));
     setEditThumbnailPositionX(values.thumbnailPositionX);
     setEditThumbnailPositionY(values.thumbnailPositionY);
@@ -132,36 +145,49 @@ export function AchievementDetailModal({
     title: editTitle,
     completionDate: editDate,
     notes: editNotes,
-    tags: editTags.split(',').map((tag) => tag.trim().toLowerCase()).filter(Boolean),
+    imageDescription: editImageDescription,
+    tags: editTags
+      .split(',')
+      .map((tag) => tag.trim().toLowerCase())
+      .filter(Boolean),
     thumbnailPositionX: editThumbnailPositionX,
     thumbnailPositionY: editThumbnailPositionY,
   };
   const dirty = isEditing && baseline !== null && !editsEqual(currentValues, baseline);
   const busy = saving || restoring || deleting || addingToCollection || draftBusy;
-  useBeforeUnload(Boolean(achievement) && (busy || (dirty && (!savedSnapshot || !editsEqual(currentValues, savedSnapshot)))));
+  useBeforeUnload(
+    Boolean(achievement) &&
+      (busy || (dirty && (!savedSnapshot || !editsEqual(currentValues, savedSnapshot))))
+  );
 
-  const finishDismissal = useCallback((destination: 'close' | 'cancel') => {
-    setPendingDestination(null);
-    if (achievement) {
-      applyValues(editValues(achievement));
-      setBaseline(editValues(achievement));
-      setBaselineUpdatedAt(achievement.updatedAt ?? null);
-    }
-    setIsEditing(false);
-    setNeedsReview(false);
-    setSavedSnapshot(null);
-    if (destination === 'close') onClose();
-  }, [achievement, applyValues, onClose]);
+  const finishDismissal = useCallback(
+    (destination: 'close' | 'cancel') => {
+      setPendingDestination(null);
+      if (achievement) {
+        applyValues(editValues(achievement));
+        setBaseline(editValues(achievement));
+        setBaselineUpdatedAt(achievement.updatedAt ?? null);
+      }
+      setIsEditing(false);
+      setNeedsReview(false);
+      setSavedSnapshot(null);
+      if (destination === 'close') onClose();
+    },
+    [achievement, applyValues, onClose]
+  );
 
-  const requestDismissal = useCallback((destination: 'close' | 'cancel') => {
-    if (busy || operationRef.current || pendingDestination) return;
-    if (dirty) {
-      setDraftError(null);
-      setPendingDestination(destination);
-    } else {
-      finishDismissal(destination);
-    }
-  }, [busy, dirty, pendingDestination, finishDismissal]);
+  const requestDismissal = useCallback(
+    (destination: 'close' | 'cancel') => {
+      if (busy || operationRef.current || pendingDestination) return;
+      if (dirty) {
+        setDraftError(null);
+        setPendingDestination(destination);
+      } else {
+        finishDismissal(destination);
+      }
+    },
+    [busy, dirty, pendingDestination, finishDismissal]
+  );
 
   useEffect(() => {
     if (initializedIdRef.current === achievement?.id) return;
@@ -186,6 +212,7 @@ export function AchievementDetailModal({
       setEditTitle('');
       setEditDate('');
       setEditNotes('');
+      setEditImageDescription('');
       setEditTags('');
       setDraftBusy(false);
       return;
@@ -196,14 +223,18 @@ export function AchievementDetailModal({
     setBaselineUpdatedAt(achievement.updatedAt ?? null);
     const generation = identityRef.current.generation;
     setDraftBusy(true);
-    void loadDraft(`edit:${achievement.id}`).then((loaded) => {
-      if (generation !== identityRef.current.generation) return;
-      if (loaded?.kind === 'edit') setDraft(loaded);
-    }).catch((cause: unknown) => {
-      if (generation === identityRef.current.generation) setDraftError(cause instanceof Error ? cause.message : 'Could not load the local draft.');
-    }).finally(() => {
-      if (generation === identityRef.current.generation) setDraftBusy(false);
-    });
+    void loadDraft(`edit:${achievement.id}`)
+      .then((loaded) => {
+        if (generation !== identityRef.current.generation) return;
+        if (loaded?.kind === 'edit') setDraft(loaded);
+      })
+      .catch((cause: unknown) => {
+        if (generation === identityRef.current.generation)
+          setDraftError(cause instanceof Error ? cause.message : 'Could not load the local draft.');
+      })
+      .finally(() => {
+        if (generation === identityRef.current.generation) setDraftBusy(false);
+      });
   }, [achievement, applyValues]);
 
   useEffect(() => {
@@ -266,7 +297,9 @@ export function AchievementDetailModal({
           headers: { 'X-Requested-With': 'XMLHttpRequest' },
         });
         if (!response.ok) return;
-        const data = (await response.json()) as { collections: Array<{ id: string; name: string }> };
+        const data = (await response.json()) as {
+          collections: Array<{ id: string; name: string }>;
+        };
         if (!cancelled) setCollections(data.collections);
       } catch {
         // The picker is optional; a failed list leaves it empty.
@@ -334,7 +367,10 @@ export function AchievementDetailModal({
             'Content-Type': 'application/json',
             'X-Requested-With': 'XMLHttpRequest',
           },
-          body: JSON.stringify({ revision: fresh.revision, achievementIds: [...freshIds, achievement.id] }),
+          body: JSON.stringify({
+            revision: fresh.revision,
+            achievementIds: [...freshIds, achievement.id],
+          }),
         });
       }
 
@@ -403,8 +439,12 @@ export function AchievementDetailModal({
 
     // Dynamic return focus: update return focus target when navigating between artworks
     const cardTrigger =
-      document.querySelector<HTMLElement>(`[data-achievement-id="${achievement.id}"] .gallery-card-trigger`) ||
-      document.querySelector<HTMLElement>(`[data-achievement-id="${achievement.id}"][role="button"]`) ||
+      document.querySelector<HTMLElement>(
+        `[data-achievement-id="${achievement.id}"] .gallery-card-trigger`
+      ) ||
+      document.querySelector<HTMLElement>(
+        `[data-achievement-id="${achievement.id}"][role="button"]`
+      ) ||
       document.querySelector<HTMLElement>(`[data-achievement-id="${achievement.id}"]`);
     if (cardTrigger) {
       triggerRef.current = cardTrigger;
@@ -423,9 +463,7 @@ export function AchievementDetailModal({
     if (viewerOpen) {
       wasViewerOpenRef.current = true;
       const timer = setTimeout(() => {
-        detailModalRef.current
-          ?.querySelector<HTMLElement>('[data-viewer-close]')
-          ?.focus();
+        detailModalRef.current?.querySelector<HTMLElement>('[data-viewer-close]')?.focus();
       }, 30);
       return () => clearTimeout(timer);
     }
@@ -441,7 +479,8 @@ export function AchievementDetailModal({
     if (!achievement) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (pendingDestination || (e.target instanceof Element && e.target.closest('dialog[open]'))) return;
+      if (pendingDestination || (e.target instanceof Element && e.target.closest('dialog[open]')))
+        return;
       if (e.key === 'Escape') {
         e.preventDefault();
         if (viewerOpen) {
@@ -500,12 +539,26 @@ export function AchievementDetailModal({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [achievement, viewerOpen, hasPrevious, hasNext, requestDismissal, pendingDestination, onViewerClose, onPrevious, onNext]);
+  }, [
+    achievement,
+    viewerOpen,
+    hasPrevious,
+    hasNext,
+    requestDismissal,
+    pendingDestination,
+    onViewerClose,
+    onPrevious,
+    onNext,
+  ]);
 
   const reportDraftFailure = (cause: unknown) => {
-    setDraftError(cause instanceof Error ? cause.message : 'Could not update the local draft. Try again.');
+    setDraftError(
+      cause instanceof Error ? cause.message : 'Could not update the local draft. Try again.'
+    );
     if (cause instanceof DraftConflictError) {
-      setDraftError(`${cause.message} Continue editing to review the latest local draft before choosing what to keep.`);
+      setDraftError(
+        `${cause.message} Continue editing to review the latest local draft before choosing what to keep.`
+      );
       setDraftConflict(true);
       setLatestDraft(undefined);
     }
@@ -518,7 +571,12 @@ export function AchievementDetailModal({
     setDraftError(null);
     const generation = identityRef.current.generation;
     try {
-      const saved = await saveEditDraft(achievement.id, baselineUpdatedAt, currentValues, draft?.revision ?? null);
+      const saved = await saveEditDraft(
+        achievement.id,
+        baselineUpdatedAt,
+        currentValues,
+        draft?.revision ?? null
+      );
       if (generation !== identityRef.current.generation) return;
       setDraft(saved);
       setSavedSnapshot(saved.values);
@@ -582,7 +640,8 @@ export function AchievementDetailModal({
   };
 
   const resumeDraft = async (candidate = draft, replaceCurrent = false) => {
-    if (!achievement || !candidate || (dirty && !replaceCurrent) || busy || operationRef.current) return;
+    if (!achievement || !candidate || (dirty && !replaceCurrent) || busy || operationRef.current)
+      return;
     operationRef.current = true;
     setDraftBusy(true);
     setDraftError(null);
@@ -596,10 +655,12 @@ export function AchievementDetailModal({
       }
       if (response.status === 404 || response.status === 410) {
         setUnavailable(true);
-        throw new Error('This artwork is unavailable or in Trash. Its local draft is kept and can still be discarded.');
+        throw new Error(
+          'This artwork is unavailable or in Trash. Its local draft is kept and can still be discarded.'
+        );
       }
       if (!response.ok) throw new Error('Could not load the current artwork. Try resuming again.');
-      const current = await response.json() as AchievementItem;
+      const current = (await response.json()) as AchievementItem;
       if (generation !== identityRef.current.generation) return;
       if (current.id !== achievement.id || current.state !== 'ready') {
         setUnavailable(true);
@@ -645,7 +706,9 @@ export function AchievementDetailModal({
     setError(null);
     setDownloadError(null);
     try {
-      const res = await fetch(`/api/achievements/${achievement.id}/assets?type=original&download=true`);
+      const res = await fetch(
+        `/api/achievements/${achievement.id}/assets?type=original&download=true`
+      );
       if (generation !== identityRef.current.generation) return;
       if (res.status === 401) {
         onSessionExpired?.();
@@ -679,7 +742,8 @@ export function AchievementDetailModal({
 
   const handleSaveEdit = async (e: FormEvent) => {
     e.preventDefault();
-    if (busy || operationRef.current || needsReview || unavailable || achievement.state !== 'ready') return;
+    if (busy || operationRef.current || needsReview || unavailable || achievement.state !== 'ready')
+      return;
     operationRef.current = true;
     setSaving(true);
     setError(null);
@@ -702,6 +766,7 @@ export function AchievementDetailModal({
           title: editTitle.trim(),
           completionDate: editDate,
           notes: editNotes.trim(),
+          imageDescription: editImageDescription.trim(),
           tags: parsedTags,
           thumbnailPositionX: editThumbnailPositionX,
           thumbnailPositionY: editThumbnailPositionY,
@@ -738,11 +803,14 @@ export function AchievementDetailModal({
         setDraftError(null);
       } catch (cause) {
         if (generation !== identityRef.current.generation) return;
-        setDraftNotice('Artwork saved successfully. Local draft cleanup failed; discard the old draft when storage is available.');
+        setDraftNotice(
+          'Artwork saved successfully. Local draft cleanup failed; discard the old draft when storage is available.'
+        );
         reportDraftFailure(cause);
       }
     } catch (err: unknown) {
-      if (generation === identityRef.current.generation) setError(err instanceof Error ? err.message : 'Save failed');
+      if (generation === identityRef.current.generation)
+        setError(err instanceof Error ? err.message : 'Save failed');
     } finally {
       if (generation === identityRef.current.generation) {
         operationRef.current = false;
@@ -784,7 +852,8 @@ export function AchievementDetailModal({
       onDelete(achievement.id);
       onClose();
     } catch (err: unknown) {
-      if (generation === identityRef.current.generation) setError(err instanceof Error ? err.message : 'Failed to delete achievement');
+      if (generation === identityRef.current.generation)
+        setError(err instanceof Error ? err.message : 'Failed to delete achievement');
     } finally {
       if (generation === identityRef.current.generation) {
         operationRef.current = false;
@@ -803,9 +872,7 @@ export function AchievementDetailModal({
       return;
     }
     if (file.size > RESTORE_MAX_BYTES) {
-      setError(
-        `File size (${(file.size / 1024 / 1024).toFixed(1)} MiB) exceeds the 10 MiB limit.`
-      );
+      setError(`File size (${(file.size / 1024 / 1024).toFixed(1)} MiB) exceeds the 10 MiB limit.`);
       return;
     }
 
@@ -874,9 +941,13 @@ export function AchievementDetailModal({
 
       // Reopening the record re-resolves the signed URL from the new asset.
       setRestoreResolved(true);
-      onUpdate({ ...finalizeData.achievement, asset: finalizeData.asset ?? achievement.asset ?? null });
+      onUpdate({
+        ...finalizeData.achievement,
+        asset: finalizeData.asset ?? achievement.asset ?? null,
+      });
     } catch (err: unknown) {
-      if (generation === identityRef.current.generation) setError(err instanceof Error ? err.message : 'Failed to restore artwork');
+      if (generation === identityRef.current.generation)
+        setError(err instanceof Error ? err.message : 'Failed to restore artwork');
     } finally {
       if (generation === identityRef.current.generation) {
         operationRef.current = false;
@@ -993,7 +1064,15 @@ export function AchievementDetailModal({
         )}
 
         {(draft || draftBusy || draftError || draftNotice) && (
-          <section aria-label="Local artwork draft" style={{ margin: '16px 24px 0', padding: 12, border: '1px solid #cbd5e1', borderRadius: 6 }}>
+          <section
+            aria-label="Local artwork draft"
+            style={{
+              margin: '16px 24px 0',
+              padding: 12,
+              border: '1px solid #cbd5e1',
+              borderRadius: 6,
+            }}
+          >
             {draftBusy && <p role="status">Working with the local draft...</p>}
             {draftNotice && <p role="status">{draftNotice}</p>}
             {draftError && <p role="alert">{draftError}</p>}
@@ -1001,17 +1080,32 @@ export function AchievementDetailModal({
               <>
                 <p>Local draft saved {new Date(draft.savedAt).toLocaleString()}.</p>
                 {!savedSnapshot && (
-                  <button type="button" className="gallery-button" disabled={busy || dirty || draftConflict || unavailable} onClick={() => void resumeDraft()}>
+                  <button
+                    type="button"
+                    className="gallery-button"
+                    disabled={busy || dirty || draftConflict || unavailable}
+                    onClick={() => void resumeDraft()}
+                  >
                     Resume draft
                   </button>
                 )}
-                <button type="button" className="gallery-button" disabled={busy || draftConflict} onClick={() => void discardDraft()}>
+                <button
+                  type="button"
+                  className="gallery-button"
+                  disabled={busy || draftConflict}
+                  onClick={() => void discardDraft()}
+                >
                   Discard draft
                 </button>
               </>
             )}
             {draftError && (
-              <button type="button" className="gallery-button" disabled={busy} onClick={() => void reviewLatestDraft()}>
+              <button
+                type="button"
+                className="gallery-button"
+                disabled={busy}
+                onClick={() => void reviewLatestDraft()}
+              >
                 {draftConflict ? 'Review latest draft' : 'Retry draft access'}
               </button>
             )}
@@ -1019,25 +1113,60 @@ export function AchievementDetailModal({
               <div>
                 {latestDraft ? (
                   <>
-                    <p>The other tab saved this draft at {new Date(latestDraft.savedAt).toLocaleString()}.</p>
+                    <p>
+                      The other tab saved this draft at{' '}
+                      {new Date(latestDraft.savedAt).toLocaleString()}.
+                    </p>
                     <dl>
-                      <dt>Title</dt><dd>{latestDraft.values.title || '(empty)'}</dd>
-                      <dt>Completion date</dt><dd>{latestDraft.values.completionDate || '(empty)'}</dd>
-                      <dt>Notes</dt><dd style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{latestDraft.values.notes || '(empty)'}</dd>
-                      <dt>Tags</dt><dd>{latestDraft.values.tags.join(', ') || '(none)'}</dd>
-                      <dt>Thumbnail framing</dt><dd>{Math.round(latestDraft.values.thumbnailPositionX * 100)}% horizontal, {Math.round(latestDraft.values.thumbnailPositionY * 100)}% vertical</dd>
+                      <dt>Title</dt>
+                      <dd>{latestDraft.values.title || '(empty)'}</dd>
+                      <dt>Completion date</dt>
+                      <dd>{latestDraft.values.completionDate || '(empty)'}</dd>
+                      <dt>Notes</dt>
+                      <dd style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                        {latestDraft.values.notes || '(empty)'}
+                      </dd>
+                      <dt>Image description</dt>
+                      <dd style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                        {latestDraft.values.imageDescription || '(empty)'}
+                      </dd>
+                      <dt>Tags</dt>
+                      <dd>{latestDraft.values.tags.join(', ') || '(none)'}</dd>
+                      <dt>Thumbnail framing</dt>
+                      <dd>
+                        {Math.round(latestDraft.values.thumbnailPositionX * 100)}% horizontal,{' '}
+                        {Math.round(latestDraft.values.thumbnailPositionY * 100)}% vertical
+                      </dd>
                     </dl>
-                    <button type="button" className="gallery-button" disabled={busy || unavailable} onClick={() => void resumeDraft(latestDraft, true)}>Use latest draft</button>
+                    <button
+                      type="button"
+                      className="gallery-button"
+                      disabled={busy || unavailable}
+                      onClick={() => void resumeDraft(latestDraft, true)}
+                    >
+                      Use latest draft
+                    </button>
                   </>
-                ) : <p>The local draft was removed by another tab.</p>}
-                <button type="button" className="gallery-button" disabled={busy} onClick={() => {
-                  setDraft(latestDraft);
-                  setSavedSnapshot(null);
-                  setDraftConflict(false);
-                  setLatestDraft(undefined);
-                  setDraftError(null);
-                  setDraftNotice('Current edits kept. Save draft will replace the local draft you just reviewed.');
-                }}>Keep current edits</button>
+                ) : (
+                  <p>The local draft was removed by another tab.</p>
+                )}
+                <button
+                  type="button"
+                  className="gallery-button"
+                  disabled={busy}
+                  onClick={() => {
+                    setDraft(latestDraft);
+                    setSavedSnapshot(null);
+                    setDraftConflict(false);
+                    setLatestDraft(undefined);
+                    setDraftError(null);
+                    setDraftNotice(
+                      'Current edits kept. Save draft will replace the local draft you just reviewed.'
+                    );
+                  }}
+                >
+                  Keep current edits
+                </button>
               </div>
             )}
           </section>
@@ -1071,12 +1200,10 @@ export function AchievementDetailModal({
                 {activeRestoreRequest.linkage === 'missing'
                   ? 'This artwork record has no linked image asset. '
                   : `The health check could not find the stored ${
-                      restoreMissingLabels.length > 0
-                        ? restoreMissingLabels.join(', ')
-                        : 'image'
+                      restoreMissingLabels.length > 0 ? restoreMissingLabels.join(', ') : 'image'
                     } ${restoreMissingLabels.length === 1 ? 'file' : 'files'}. `}
-                Restoring uploads a replacement image file only. The title, completion date,
-                notes, tags, and thumbnail framing are metadata and stay unchanged.
+                Restoring uploads a replacement image file only. The title, completion date, notes,
+                tags, and thumbnail framing are metadata and stay unchanged.
               </p>
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -1140,7 +1267,13 @@ export function AchievementDetailModal({
             <div style={{ flex: '1 1 220px' }}>
               <label
                 htmlFor="detail-collection-select"
-                style={{ display: 'block', fontWeight: 600, fontSize: 12, color: '#475569', marginBottom: 4 }}
+                style={{
+                  display: 'block',
+                  fontWeight: 600,
+                  fontSize: 12,
+                  color: '#475569',
+                  marginBottom: 4,
+                }}
               >
                 Add to collection
               </label>
@@ -1189,7 +1322,11 @@ export function AchievementDetailModal({
               {addingToCollection ? 'Adding…' : 'Add to collection'}
             </button>
             {collectionMessage && (
-              <p role="status" aria-live="polite" style={{ flex: '1 1 100%', margin: 0, fontSize: 13, color: '#334155' }}>
+              <p
+                role="status"
+                aria-live="polite"
+                style={{ flex: '1 1 100%', margin: 0, fontSize: 13, color: '#334155' }}
+              >
                 {collectionMessage}
               </p>
             )}
@@ -1208,7 +1345,15 @@ export function AchievementDetailModal({
         />
 
         {/* Content Body: Responsive Split */}
-        <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', padding: '24px', gap: '24px' }}>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            padding: '24px',
+            gap: '24px',
+          }}
+        >
           {/* Left: Image Display */}
           <div
             style={{
@@ -1229,7 +1374,7 @@ export function AchievementDetailModal({
             {!imageLoading && displayUrl && !imageError && (
               <img
                 src={displayUrl}
-                alt={achievement.title}
+                alt={achievement.imageDescription?.trim() || achievement.title}
                 decoding="async"
                 onError={() => {
                   setDisplayUrl(null);
@@ -1284,7 +1429,15 @@ export function AchievementDetailModal({
                 <div style={{ color: '#e2e8f0', fontSize: '16px', fontWeight: 600 }}>
                   Preview unavailable
                 </div>
-                <p style={{ margin: 0, color: '#94a3b8', fontSize: '13px', maxWidth: 340, lineHeight: 1.5 }}>
+                <p
+                  style={{
+                    margin: 0,
+                    color: '#94a3b8',
+                    fontSize: '13px',
+                    maxWidth: 340,
+                    lineHeight: 1.5,
+                  }}
+                >
                   The artwork preview couldn&apos;t be loaded. If the stored file was lost,
                   re-attach the original to restore it. The title, date, notes and tags stay
                   unchanged.
@@ -1318,17 +1471,35 @@ export function AchievementDetailModal({
               <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                 {/* Completion Date */}
                 <div style={{ marginBottom: 16 }}>
-                  <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  <span
+                    style={{
+                      fontSize: '13px',
+                      color: '#64748b',
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                    }}
+                  >
                     Completed
                   </span>
-                  <div style={{ fontSize: '16px', fontWeight: 600, color: '#1e293b', marginTop: 2 }}>
+                  <div
+                    style={{ fontSize: '16px', fontWeight: 600, color: '#1e293b', marginTop: 2 }}
+                  >
                     {achievement.completionDate}
                   </div>
                 </div>
 
                 {/* Notes */}
                 <div style={{ marginBottom: 20 }}>
-                  <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  <span
+                    style={{
+                      fontSize: '13px',
+                      color: '#64748b',
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                    }}
+                  >
                     Artist Notes & Reflections
                   </span>
                   <div
@@ -1345,13 +1516,23 @@ export function AchievementDetailModal({
                       minHeight: 60,
                     }}
                   >
-                    {achievement.notes || <em style={{ color: '#94a3b8' }}>No notes recorded for this piece.</em>}
+                    {achievement.notes || (
+                      <em style={{ color: '#94a3b8' }}>No notes recorded for this piece.</em>
+                    )}
                   </div>
                 </div>
 
                 {/* Tags */}
                 <div style={{ marginBottom: 24 }}>
-                  <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  <span
+                    style={{
+                      fontSize: '13px',
+                      color: '#64748b',
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                    }}
+                  >
                     Tags
                   </span>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
@@ -1378,7 +1559,9 @@ export function AchievementDetailModal({
                 </div>
 
                 {/* Action Buttons */}
-                <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div
+                  style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}
+                >
                   <button
                     type="button"
                     onClick={() => void handleDownloadOriginal()}
@@ -1444,7 +1627,11 @@ export function AchievementDetailModal({
                         Boolean(draft && !savedSnapshot) ||
                         achievement.state !== 'ready'
                       }
-                      title={draft && !savedSnapshot ? 'Resume or discard the saved local draft before editing.' : undefined}
+                      title={
+                        draft && !savedSnapshot
+                          ? 'Resume or discard the saved local draft before editing.'
+                          : undefined
+                      }
                       onClick={() => {
                         const values = editValues(achievement);
                         applyValues(values);
@@ -1490,255 +1677,381 @@ export function AchievementDetailModal({
               </div>
             ) : (
               /* Edit Form */
-              <form onSubmit={(e) => void handleSaveEdit(e)} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <fieldset disabled={busy} style={{ display: 'contents', border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-                {needsReview && (
-                  <div role="alert" style={{ marginBottom: 14 }}>
-                    <p>The artwork changed since this draft was saved. Review all recovered edits against the current artwork before saving.</p>
-                    <label>
-                      <input type="checkbox" onChange={(event) => {
-                        if (event.target.checked) {
-                          setNeedsReview(false);
-                          setBaselineUpdatedAt(achievement.updatedAt ?? null);
-                        }
-                      }} />
-                      I have reviewed the recovered edits.
-                    </label>
-                  </div>
-                )}
-                {unavailable && <p role="alert">This artwork is unavailable or in Trash. Keep or discard the local draft; it cannot currently be applied.</p>}
-                <div style={{ marginBottom: 14 }}>
-                  <label htmlFor="edit-title-input" style={{ display: 'block', fontWeight: 600, fontSize: '13px', color: '#334155', marginBottom: 4 }}>
-                    Title * ({editTitle.length}/120)
-                  </label>
-                  <input
-                    id="edit-title-input"
-                    type="text"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    maxLength={120}
-                    required
-                    style={{
-                      width: '100%',
-                      boxSizing: 'border-box',
-                      padding: '8px 12px',
-                      borderRadius: 6,
-                      border: '1px solid #cbd5e1',
-                      fontSize: '14px',
-                    }}
-                  />
-                </div>
-
-                <div style={{ marginBottom: 14 }}>
-                  <label htmlFor="edit-date-input" style={{ display: 'block', fontWeight: 600, fontSize: '13px', color: '#334155', marginBottom: 4 }}>
-                    Completion Date *
-                  </label>
-                  <input
-                    id="edit-date-input"
-                    type="date"
-                    value={editDate}
-                    onChange={(e) => setEditDate(e.target.value)}
-                    required
-                    style={{
-                      width: '100%',
-                      boxSizing: 'border-box',
-                      padding: '8px 12px',
-                      borderRadius: 6,
-                      border: '1px solid #cbd5e1',
-                      fontSize: '14px',
-                    }}
-                  />
-                </div>
-
-                <div style={{ marginBottom: 14 }}>
-                  <label htmlFor="edit-notes-input" style={{ display: 'block', fontWeight: 600, fontSize: '13px', color: '#334155', marginBottom: 4 }}>
-                    Notes ({editNotes.length}/2000)
-                  </label>
-                  <textarea
-                    id="edit-notes-input"
-                    value={editNotes}
-                    onChange={(e) => setEditNotes(e.target.value)}
-                    maxLength={2000}
-                    rows={4}
-                    style={{
-                      width: '100%',
-                      boxSizing: 'border-box',
-                      padding: '8px 12px',
-                      borderRadius: 6,
-                      border: '1px solid #cbd5e1',
-                      fontSize: '14px',
-                      resize: 'vertical',
-                    }}
-                  />
-                </div>
-
-                <div style={{ marginBottom: 20 }}>
-                  <span style={{ display: 'block', fontWeight: 600, fontSize: '13px', color: '#334155', marginBottom: 6 }}>
-                    Gallery Thumbnail Framing
-                  </span>
-                  <div
-                    style={{
-                      width: '100%',
-                      maxWidth: 320,
-                      aspectRatio: '4 / 3',
-                      backgroundColor: '#f1f5f9',
-                      borderRadius: 8,
-                      border: '1px solid #cbd5e1',
-                      overflow: 'hidden',
-                      marginBottom: 10,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    {displayUrl ? (
-                      <img
-                        data-thumbnail-preview
-                        src={displayUrl}
-                        alt="Gallery thumbnail framing preview"
-                        style={{
-                          display: 'block',
-                          width: '100%',
-                          height: '100%',
-                          objectFit: 'cover',
-                          objectPosition: `${editThumbnailPositionX * 100}% ${editThumbnailPositionY * 100}%`,
-                        }}
-                      />
-                    ) : (
-                      <span style={{ color: '#64748b', fontSize: '13px' }}>
-                        {imageLoading ? 'Loading preview...' : 'Preview unavailable'}
-                      </span>
-                    )}
-                  </div>
-
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
+              <form
+                onSubmit={(e) => void handleSaveEdit(e)}
+                style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
+              >
+                <fieldset
+                  disabled={busy}
+                  style={{ display: 'contents', border: 0, padding: 0, margin: 0, minWidth: 0 }}
+                >
+                  {needsReview && (
+                    <div role="alert" style={{ marginBottom: 14 }}>
+                      <p>
+                        The artwork changed since this draft was saved. Review all recovered edits
+                        against the current artwork before saving.
+                      </p>
+                      <label>
+                        <input
+                          type="checkbox"
+                          onChange={(event) => {
+                            if (event.target.checked) {
+                              setNeedsReview(false);
+                              setBaselineUpdatedAt(achievement.updatedAt ?? null);
+                            }
+                          }}
+                        />
+                        I have reviewed the recovered edits.
+                      </label>
+                    </div>
+                  )}
+                  {unavailable && (
+                    <p role="alert">
+                      This artwork is unavailable or in Trash. Keep or discard the local draft; it
+                      cannot currently be applied.
+                    </p>
+                  )}
+                  <div style={{ marginBottom: 14 }}>
                     <label
-                      htmlFor="edit-thumbnail-position-x"
-                      style={{ flex: '1 1 180px', minWidth: 160, fontSize: '13px', color: '#334155' }}
-                    >
-                      <span style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
-                        Horizontal ({Math.round(editThumbnailPositionX * 100)}%)
-                      </span>
-                      <input
-                        id="edit-thumbnail-position-x"
-                        type="range"
-                        min={0}
-                        max={1}
-                        step={0.01}
-                        value={editThumbnailPositionX}
-                        aria-valuetext={`${Math.round(editThumbnailPositionX * 100)}%`}
-                        onChange={(e) => setEditThumbnailPositionX(Number(e.target.value))}
-                        style={{ width: '100%', minHeight: 44, accentColor: '#2563eb' }}
-                      />
-                    </label>
-                    <label
-                      htmlFor="edit-thumbnail-position-y"
-                      style={{ flex: '1 1 180px', minWidth: 160, fontSize: '13px', color: '#334155' }}
-                    >
-                      <span style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
-                        Vertical ({Math.round(editThumbnailPositionY * 100)}%)
-                      </span>
-                      <input
-                        id="edit-thumbnail-position-y"
-                        type="range"
-                        min={0}
-                        max={1}
-                        step={0.01}
-                        value={editThumbnailPositionY}
-                        aria-valuetext={`${Math.round(editThumbnailPositionY * 100)}%`}
-                        onChange={(e) => setEditThumbnailPositionY(Number(e.target.value))}
-                        style={{ width: '100%', minHeight: 44, accentColor: '#2563eb' }}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditThumbnailPositionX(0.5);
-                        setEditThumbnailPositionY(0.5);
-                      }}
+                      htmlFor="edit-title-input"
                       style={{
-                        minHeight: 44,
-                        padding: '8px 16px',
-                        backgroundColor: '#f8fafc',
-                        color: '#334155',
-                        border: '1px solid #cbd5e1',
-                        borderRadius: 6,
+                        display: 'block',
                         fontWeight: 600,
                         fontSize: '13px',
+                        color: '#334155',
+                        marginBottom: 4,
+                      }}
+                    >
+                      Title * ({editTitle.length}/120)
+                    </label>
+                    <input
+                      id="edit-title-input"
+                      type="text"
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      maxLength={120}
+                      required
+                      style={{
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        padding: '8px 12px',
+                        borderRadius: 6,
+                        border: '1px solid #cbd5e1',
+                        fontSize: '14px',
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: 14 }}>
+                    <label
+                      htmlFor="edit-date-input"
+                      style={{
+                        display: 'block',
+                        fontWeight: 600,
+                        fontSize: '13px',
+                        color: '#334155',
+                        marginBottom: 4,
+                      }}
+                    >
+                      Completion Date *
+                    </label>
+                    <input
+                      id="edit-date-input"
+                      type="date"
+                      value={editDate}
+                      onChange={(e) => setEditDate(e.target.value)}
+                      required
+                      style={{
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        padding: '8px 12px',
+                        borderRadius: 6,
+                        border: '1px solid #cbd5e1',
+                        fontSize: '14px',
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: 14 }}>
+                    <label
+                      htmlFor="edit-image-description-input"
+                      style={{
+                        display: 'block',
+                        fontWeight: 600,
+                        fontSize: '13px',
+                        color: '#334155',
+                        marginBottom: 4,
+                      }}
+                    >
+                      Image description ({editImageDescription.length}/500)
+                    </label>
+                    <textarea
+                      id="edit-image-description-input"
+                      maxLength={500}
+                      value={editImageDescription}
+                      onChange={(event) => setEditImageDescription(event.target.value)}
+                      rows={3}
+                      style={{
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        padding: 10,
+                        border: '1px solid #cbd5e1',
+                        borderRadius: 6,
+                        font: 'inherit',
+                        resize: 'vertical',
+                      }}
+                    />
+                    <p style={{ margin: '4px 0 12px', color: '#64748b', fontSize: 12 }}>
+                      Describe the artwork’s essential visual content for someone who cannot see it.
+                      Leave blank to use its title.
+                    </p>
+                    <label
+                      htmlFor="edit-notes-input"
+                      style={{
+                        display: 'block',
+                        fontWeight: 600,
+                        fontSize: '13px',
+                        color: '#334155',
+                        marginBottom: 4,
+                      }}
+                    >
+                      Notes ({editNotes.length}/2000)
+                    </label>
+                    <textarea
+                      id="edit-notes-input"
+                      value={editNotes}
+                      onChange={(e) => setEditNotes(e.target.value)}
+                      maxLength={2000}
+                      rows={4}
+                      style={{
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        padding: '8px 12px',
+                        borderRadius: 6,
+                        border: '1px solid #cbd5e1',
+                        fontSize: '14px',
+                        resize: 'vertical',
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: 20 }}>
+                    <span
+                      style={{
+                        display: 'block',
+                        fontWeight: 600,
+                        fontSize: '13px',
+                        color: '#334155',
+                        marginBottom: 6,
+                      }}
+                    >
+                      Gallery Thumbnail Framing
+                    </span>
+                    <div
+                      style={{
+                        width: '100%',
+                        maxWidth: 320,
+                        aspectRatio: '4 / 3',
+                        backgroundColor: '#f1f5f9',
+                        borderRadius: 8,
+                        border: '1px solid #cbd5e1',
+                        overflow: 'hidden',
+                        marginBottom: 10,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      {displayUrl ? (
+                        <img
+                          data-thumbnail-preview
+                          src={displayUrl}
+                          alt="Gallery thumbnail framing preview"
+                          style={{
+                            display: 'block',
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'cover',
+                            objectPosition: `${editThumbnailPositionX * 100}% ${editThumbnailPositionY * 100}%`,
+                          }}
+                        />
+                      ) : (
+                        <span style={{ color: '#64748b', fontSize: '13px' }}>
+                          {imageLoading ? 'Loading preview...' : 'Preview unavailable'}
+                        </span>
+                      )}
+                    </div>
+
+                    <div
+                      style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}
+                    >
+                      <label
+                        htmlFor="edit-thumbnail-position-x"
+                        style={{
+                          flex: '1 1 180px',
+                          minWidth: 160,
+                          fontSize: '13px',
+                          color: '#334155',
+                        }}
+                      >
+                        <span style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
+                          Horizontal ({Math.round(editThumbnailPositionX * 100)}%)
+                        </span>
+                        <input
+                          id="edit-thumbnail-position-x"
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          value={editThumbnailPositionX}
+                          aria-valuetext={`${Math.round(editThumbnailPositionX * 100)}%`}
+                          onChange={(e) => setEditThumbnailPositionX(Number(e.target.value))}
+                          style={{ width: '100%', minHeight: 44, accentColor: '#2563eb' }}
+                        />
+                      </label>
+                      <label
+                        htmlFor="edit-thumbnail-position-y"
+                        style={{
+                          flex: '1 1 180px',
+                          minWidth: 160,
+                          fontSize: '13px',
+                          color: '#334155',
+                        }}
+                      >
+                        <span style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
+                          Vertical ({Math.round(editThumbnailPositionY * 100)}%)
+                        </span>
+                        <input
+                          id="edit-thumbnail-position-y"
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          value={editThumbnailPositionY}
+                          aria-valuetext={`${Math.round(editThumbnailPositionY * 100)}%`}
+                          onChange={(e) => setEditThumbnailPositionY(Number(e.target.value))}
+                          style={{ width: '100%', minHeight: 44, accentColor: '#2563eb' }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditThumbnailPositionX(0.5);
+                          setEditThumbnailPositionY(0.5);
+                        }}
+                        style={{
+                          minHeight: 44,
+                          padding: '8px 16px',
+                          backgroundColor: '#f8fafc',
+                          color: '#334155',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: 6,
+                          fontWeight: 600,
+                          fontSize: '13px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Center
+                      </button>
+                    </div>
+                    <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#64748b' }}>
+                      Framing changes only the gallery card. The full artwork and original download
+                      stay unchanged.
+                    </p>
+                  </div>
+
+                  <div style={{ marginBottom: 20 }}>
+                    <label
+                      htmlFor="edit-tags-input"
+                      style={{
+                        display: 'block',
+                        fontWeight: 600,
+                        fontSize: '13px',
+                        color: '#334155',
+                        marginBottom: 4,
+                      }}
+                    >
+                      Tags (comma-separated, max 10)
+                    </label>
+                    <input
+                      id="edit-tags-input"
+                      type="text"
+                      value={editTags}
+                      onChange={(e) => setEditTags(e.target.value)}
+                      placeholder="oil, portrait, study"
+                      style={{
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        padding: '8px 12px',
+                        borderRadius: 6,
+                        border: '1px solid #cbd5e1',
+                        fontSize: '14px',
+                      }}
+                    />
+                  </div>
+
+                  <p style={{ fontSize: 12, color: '#475569' }}>
+                    Drafts stay in this browser on this device, including after logout. They are not
+                    encrypted or synced. Anyone with this browser profile can access them. Clearing
+                    site data, private browsing, or browser storage eviction can remove them. Save
+                    again after further edits; closing the browser does not save automatically.
+                  </p>
+                  <p role="status" style={{ fontSize: 12 }}>
+                    {savedSnapshot && editsEqual(currentValues, savedSnapshot)
+                      ? 'These edits are saved as a local draft.'
+                      : dirty
+                        ? 'These edits have not been saved as a local draft.'
+                        : 'No unfinished edits.'}
+                  </p>
+                  <div
+                    style={{
+                      marginTop: 'auto',
+                      display: 'flex',
+                      justifyContent: 'flex-end',
+                      flexWrap: 'wrap',
+                      gap: 10,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="gallery-button"
+                      disabled={busy || draftConflict}
+                      onClick={() => void persistDraft()}
+                    >
+                      Save draft
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => requestDismissal('cancel')}
+                      disabled={busy}
+                      style={{
+                        padding: '8px 14px',
+                        backgroundColor: '#f1f5f9',
+                        color: '#475569',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: 6,
+                        fontWeight: 500,
                         cursor: 'pointer',
                       }}
                     >
-                      Center
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={busy || needsReview || unavailable || achievement.state !== 'ready'}
+                      style={{
+                        padding: '8px 18px',
+                        backgroundColor: '#2563eb',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 6,
+                        fontWeight: 600,
+                        cursor: saving ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      {saving ? 'Saving...' : 'Save Changes'}
                     </button>
                   </div>
-                  <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#64748b' }}>
-                    Framing changes only the gallery card. The full artwork and original download stay unchanged.
-                  </p>
-                </div>
-
-                <div style={{ marginBottom: 20 }}>
-                  <label htmlFor="edit-tags-input" style={{ display: 'block', fontWeight: 600, fontSize: '13px', color: '#334155', marginBottom: 4 }}>
-                    Tags (comma-separated, max 10)
-                  </label>
-                  <input
-                    id="edit-tags-input"
-                    type="text"
-                    value={editTags}
-                    onChange={(e) => setEditTags(e.target.value)}
-                    placeholder="oil, portrait, study"
-                    style={{
-                      width: '100%',
-                      boxSizing: 'border-box',
-                      padding: '8px 12px',
-                      borderRadius: 6,
-                      border: '1px solid #cbd5e1',
-                      fontSize: '14px',
-                    }}
-                  />
-                </div>
-
-                <p style={{ fontSize: 12, color: '#475569' }}>
-                  Drafts stay in this browser on this device, including after logout. They are not encrypted or synced.
-                  Anyone with this browser profile can access them. Clearing site data, private browsing, or browser storage eviction can remove them.
-                  Save again after further edits; closing the browser does not save automatically.
-                </p>
-                <p role="status" style={{ fontSize: 12 }}>
-                  {savedSnapshot && editsEqual(currentValues, savedSnapshot) ? 'These edits are saved as a local draft.' : dirty ? 'These edits have not been saved as a local draft.' : 'No unfinished edits.'}
-                </p>
-                <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 10 }}>
-                  <button type="button" className="gallery-button" disabled={busy || draftConflict} onClick={() => void persistDraft()}>Save draft</button>
-                  <button
-                    type="button"
-                    onClick={() => requestDismissal('cancel')}
-                    disabled={busy}
-                    style={{
-                      padding: '8px 14px',
-                      backgroundColor: '#f1f5f9',
-                      color: '#475569',
-                      border: '1px solid #cbd5e1',
-                      borderRadius: 6,
-                      fontWeight: 500,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={busy || needsReview || unavailable || achievement.state !== 'ready'}
-                    style={{
-                      padding: '8px 18px',
-                      backgroundColor: '#2563eb',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 6,
-                      fontWeight: 600,
-                      cursor: saving ? 'not-allowed' : 'pointer',
-                    }}
-                  >
-                    {saving ? 'Saving...' : 'Save Changes'}
-                  </button>
-                </div>
                 </fieldset>
               </form>
             )}

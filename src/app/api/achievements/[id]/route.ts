@@ -9,15 +9,13 @@ import {
   validateTitle,
   validateCompletionDate,
   validateNotes,
+  validateImageDescription,
   validateTags,
   validateThumbnailPosition,
   ValidationError,
 } from '@/lib/validation/achievement';
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { errorResponse } = await authenticateApiRequest(request);
   if (errorResponse) return errorResponse;
 
@@ -32,6 +30,7 @@ export async function GET(
         title: achievements.title,
         completionDate: achievements.completionDate,
         notes: achievements.notes,
+        imageDescription: achievements.imageDescription,
         tags: achievements.tags,
         thumbnailPositionX: achievements.thumbnailPositionX,
         thumbnailPositionY: achievements.thumbnailPositionY,
@@ -63,10 +62,7 @@ export async function GET(
   }
 }
 
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { errorResponse } = await authenticateApiRequest(request);
   if (errorResponse) return errorResponse;
 
@@ -109,6 +105,9 @@ export async function PATCH(
     if (body.notes !== undefined) {
       updates.notes = validateNotes(body.notes);
     }
+    if (body.imageDescription !== undefined) {
+      updates.imageDescription = validateImageDescription(body.imageDescription);
+    }
     if (body.tags !== undefined) {
       updates.tags = validateTags(body.tags);
     }
@@ -131,10 +130,7 @@ export async function PATCH(
     .where(eq(achievements.id, id))
     .returning();
 
-  const assetRows = await db
-    .select()
-    .from(assets)
-    .where(eq(assets.achievementId, id));
+  const assetRows = await db.select().from(assets).where(eq(assets.achievementId, id));
 
   const asset = assetRows[0];
 

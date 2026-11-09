@@ -114,6 +114,7 @@ export async function initTables(client: {
         title VARCHAR(120) NOT NULL,
         completion_date DATE NOT NULL,
         notes TEXT,
+        image_description TEXT NOT NULL DEFAULT '',
         tags JSONB NOT NULL DEFAULT '[]'::jsonb,
         state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'ready', 'deleting')),
         trashed_at TIMESTAMPTZ,
@@ -247,6 +248,7 @@ export async function initTables(client: {
       title VARCHAR(120) NOT NULL,
       completion_date DATE NOT NULL,
       notes TEXT,
+      image_description TEXT NOT NULL DEFAULT '',
       tags JSONB NOT NULL DEFAULT '[]'::jsonb,
       thumbnail_position_x REAL NOT NULL DEFAULT 0.5
         CONSTRAINT achievements_thumbnail_position_x_check
@@ -358,7 +360,11 @@ export async function getDb(): Promise<AppDatabase> {
   }
 
   // In test environment or offline execution, use hermetic PGlite WASM Postgres
-  if (process.env.NODE_ENV === 'test' || !env.DATABASE_URL || env.DATABASE_URL.includes('localhost:5432/test_db')) {
+  if (
+    process.env.NODE_ENV === 'test' ||
+    !env.DATABASE_URL ||
+    env.DATABASE_URL.includes('localhost:5432/test_db')
+  ) {
     const cached = globalForDb.__hallOfAchievementsPglite;
     if (cached) {
       globalClient = cached.pglite;

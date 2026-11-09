@@ -17,6 +17,7 @@ import {
   validateTitle,
   validateCompletionDate,
   validateNotes,
+  validateImageDescription,
   validateTags,
   ValidationError,
 } from '@/lib/validation/achievement';
@@ -73,7 +74,10 @@ function unavailableTarget(row: { state: string; trashedAt: Date | null }): Fina
  * Reads the optional target artwork from the request body. A malformed value is
  * rejected here so a database cast error can never surface as a 500.
  */
-function requestedAchievementId(body: FinalizeRequestBody): { id: string | null; invalid: boolean } {
+function requestedAchievementId(body: FinalizeRequestBody): {
+  id: string | null;
+  invalid: boolean;
+} {
   const raw = body.achievementId;
   if (raw === undefined || raw === null || raw === '') return { id: null, invalid: false };
   if (typeof raw !== 'string') return { id: null, invalid: true };
@@ -156,7 +160,11 @@ async function loadIntentState(db: AppDatabase, intentId: string): Promise<Inten
     if (intent.status === 'cleaned') {
       return {
         kind: 'failed',
-        result: fail(410, 'INTENT_CLEANED', 'Upload intent was already cleaned and cannot be promoted'),
+        result: fail(
+          410,
+          'INTENT_CLEANED',
+          'Upload intent was already cleaned and cannot be promoted'
+        ),
       };
     }
 
@@ -206,7 +214,11 @@ async function bindIntent(
       if (intent.status !== 'pending' || Date.now() > intent.expiresAt.getTime()) {
         return {
           kind: 'failed',
-          result: fail(409, 'INTENT_NOT_PENDING', 'This upload intent is no longer pending. Retry with a new upload.'),
+          result: fail(
+            409,
+            'INTENT_NOT_PENDING',
+            'This upload intent is no longer pending. Retry with a new upload.'
+          ),
         };
       }
 
@@ -279,7 +291,12 @@ async function bindIntent(
           .from(assets)
           .where(eq(assets.achievementId, row.id));
 
-        return { kind: 'bound', intent, achievementId: row.id, existingAsset: existingAsset ?? null };
+        return {
+          kind: 'bound',
+          intent,
+          achievementId: row.id,
+          existingAsset: existingAsset ?? null,
+        };
       }
 
       const now = new Date();
@@ -294,6 +311,7 @@ async function bindIntent(
       }).format(now);
       const completionDate = validateCompletionDate(body.completionDate ?? todayDate, clientTz);
       const notes = validateNotes(body.notes);
+      const imageDescription = validateImageDescription(body.imageDescription);
       const tags = validateTags(body.tags);
 
       const achievementId = crypto.randomUUID();
@@ -302,13 +320,11 @@ async function bindIntent(
         title,
         completionDate,
         notes,
+        imageDescription,
         tags,
         state: 'pending',
       });
-      await tx
-        .update(uploadIntents)
-        .set({ achievementId })
-        .where(eq(uploadIntents.id, intent.id));
+      await tx.update(uploadIntents).set({ achievementId }).where(eq(uploadIntents.id, intent.id));
 
       return { kind: 'bound', intent, achievementId, existingAsset: null };
     });
@@ -422,10 +438,7 @@ async function buildReplay(db: AppDatabase, intent: UploadIntent): Promise<Final
   return { ok: true, payload: { finalized: true, achievement, asset: assetPayload(asset) } };
 }
 
-async function runFinalize(
-  intentId: string,
-  body: FinalizeRequestBody
-): Promise<FinalizeResult> {
+async function runFinalize(intentId: string, body: FinalizeRequestBody): Promise<FinalizeResult> {
   const db = await getDb();
   const storage = getStorage();
 
