@@ -199,10 +199,36 @@ export function AddAchievementModal({
     setNotice(null);
 
     const completionDate = todayLocalDate();
-    setItems((previous) => [
-      ...previous,
-      ...accepted.map((file) => createQueueItem(file, { completionDate })),
-    ]);
+    const addedItems = accepted.map((file) => ({
+      ...createQueueItem(file, { completionDate }),
+      duplicateCheck: 'checking' as const,
+    }));
+    setItems((previous) => [...previous, ...addedItems]);
+
+    for (const item of addedItems) {
+      const file = item.file;
+      void (async () => {
+        try {
+          const bytes = await file.arrayBuffer();
+          const digest = await crypto.subtle.digest('SHA-256', bytes);
+          const checksum = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+          const response = await fetch('/api/achievements/duplicates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ checksum }),
+          });
+          if (!response.ok) throw new Error('Duplicate check failed');
+          const result = await response.json() as { matches?: UploadQueueItem['duplicateMatches'] };
+          setItems((current) => current.map((entry) => entry.id === item.id
+            ? { ...entry, duplicateMatches: result.matches ?? [], duplicateCheck: 'done' }
+            : entry));
+        } catch {
+          setItems((current) => current.map((entry) => entry.id === item.id
+            ? { ...entry, duplicateCheck: 'unavailable' }
+            : entry));
+        }
+      })();
+    }
   };
 
   const updateItem = useCallback((id: string, patch: Partial<UploadQueueItem>) => {

@@ -120,6 +120,22 @@ export function BatchUploadList({ items, running, onEdit, onRetry, onRemove }: B
               </p>
             )}
 
+            {item.duplicateCheck === 'checking' && (
+              <p role="status" style={{ margin: '0 0 10px', fontSize: 13, color: '#53645e' }}>
+                Checking whether this exact image is already in your archive…
+              </p>
+            )}
+            {item.duplicateMatches && item.duplicateMatches.length > 0 && (
+              <p role="status" style={{ margin: '0 0 10px', padding: 10, background: '#f4f5f1', fontSize: 13, lineHeight: 1.5 }}>
+                This file is byte-for-byte identical to {item.duplicateMatches.map((match) => `“${match.title}” (${match.completionDate})`).join(', ')}. You can still save it as a separate achievement.
+              </p>
+            )}
+            {item.duplicateCheck === 'unavailable' && (
+              <p role="status" style={{ margin: '0 0 10px', fontSize: 13, color: '#53645e' }}>
+                Duplicate check unavailable. You can continue uploading.
+              </p>
+            )}
+
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
               <div style={{ gridColumn: '1 / -1' }}>
                 <label htmlFor={`upload-title-${item.id}`} style={labelStyle}>

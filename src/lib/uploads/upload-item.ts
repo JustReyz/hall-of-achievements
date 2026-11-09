@@ -21,6 +21,8 @@ export interface UploadQueueItem {
   uploadUrl: string | null;
   achievementId: string | null;
   error: string | null;
+  duplicateMatches?: Array<{ id: string; title: string; completionDate: string }>;
+  duplicateCheck?: 'checking' | 'done' | 'unavailable';
 }
 
 export interface UploadDeps {
@@ -99,6 +101,8 @@ export function createQueueItem(
     uploadUrl: null,
     achievementId: null,
     error: null,
+    duplicateMatches: [],
+    duplicateCheck: 'unavailable',
   };
 }
 
