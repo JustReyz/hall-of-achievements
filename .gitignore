@@ -1,5 +1,8 @@
 # Existing local credential file. Never publish it.
 [Cc]ontext7*.md
+# Local CEO and agent role configuration; keep these machine-specific files private.
+/CEO.md
+/codex/agents/
 .env
 .env.*
 !.env.example

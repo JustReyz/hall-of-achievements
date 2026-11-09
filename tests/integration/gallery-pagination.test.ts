@@ -217,6 +217,25 @@ describe('Integration: Gallery Query Engine, Cursor Pagination & Search', () => 
     expect(data3.items.length).toBe(0);
   });
 
+  it('filters to only artworks without tags and rejects conflicting tag filters', async () => {
+    const { headers } = await createAuthenticatedHeaders();
+    const db = await getDb();
+    const untaggedId = crypto.randomUUID();
+    const taggedId = crypto.randomUUID();
+    await db.insert(achievements).values([
+      { id: untaggedId, title: 'Needs tags', completionDate: '2026-04-01', tags: [], state: 'ready' },
+      { id: taggedId, title: 'Organized', completionDate: '2026-04-02', tags: ['oil'], state: 'ready' },
+    ]);
+
+    const response = await galleryHandler(new NextRequest('http://localhost/api/achievements?untagged=true', { headers }));
+    expect(response.status).toBe(200);
+    const result = (await response.json()) as { items: Array<{ id: string }> };
+    expect(result.items.map((item) => item.id)).toEqual([untaggedId]);
+
+    const conflict = await galleryHandler(new NextRequest('http://localhost/api/achievements?untagged=true&tag=oil', { headers }));
+    expect(conflict.status).toBe(400);
+  });
+
   it('strictly excludes pending or deleting achievements from the gallery', async () => {
     const { headers } = await createAuthenticatedHeaders();
     const db = await getDb();

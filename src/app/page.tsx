@@ -39,7 +39,7 @@ type GalleryTool =
   | 'trash'
   | 'notifications';
 
-const EMPTY_FILTERS: GalleryFilters = { q: '', from: '', to: '', tag: '', sort: 'newest' };
+const EMPTY_FILTERS: GalleryFilters = { q: '', from: '', to: '', tag: '', untagged: false, sort: 'newest' };
 
 interface GalleryRequestResult {
   ok: boolean;
@@ -52,6 +52,7 @@ function matchesGalleryFilters(item: AchievementItem, filters: GalleryFilters): 
   if (filters.from && item.completionDate < filters.from) return false;
   if (filters.to && item.completionDate > filters.to) return false;
   if (filters.tag && !item.tags.includes(filters.tag)) return false;
+  if (filters.untagged && item.tags.length > 0) return false;
 
   const query = filters.q.trim().toLowerCase();
   if (!query) return true;
@@ -381,7 +382,7 @@ export default function HomePage() {
     ): Promise<GalleryRequestResult> => {
       const collection = collectionRef.current;
       const appendKey = pageCursor
-        ? `${active.q}\u0000${active.from}\u0000${active.to}\u0000${active.tag}\u0000${active.sort ?? 'newest'}\u0000${collection?.id ?? ''}\u0000${pageCursor}`
+        ? `${active.q}\u0000${active.from}\u0000${active.to}\u0000${active.tag}\u0000${active.untagged ? 'untagged' : ''}\u0000${active.sort ?? 'newest'}\u0000${collection?.id ?? ''}\u0000${pageCursor}`
         : null;
 
       if (appendKey) {
@@ -415,6 +416,7 @@ export default function HomePage() {
           if (active.from) params.set('from', active.from);
           if (active.to) params.set('to', active.to);
           if (active.tag) params.set('tag', active.tag);
+          if (active.untagged) params.set('untagged', 'true');
           if (active.sort) params.set('sort', active.sort);
           if (pageCursor) params.set('cursor', pageCursor);
           const endpoint = collection
@@ -555,6 +557,7 @@ export default function HomePage() {
         next.from === filters.from &&
         next.to === filters.to &&
         next.tag === filters.tag &&
+        Boolean(next.untagged) === Boolean(filters.untagged) &&
         (next.sort ?? 'newest') === (filters.sort ?? 'newest')
       ) {
         return;
@@ -590,11 +593,11 @@ export default function HomePage() {
 
   // The tag facet ignores the selected tag, so selecting one refreshes only the gallery.
   const handleSelectTag = useCallback(
-    (tag: string) => {
-      if (tag === filters.tag) return;
+    (tag: string, untagged = false) => {
+      if (tag === filters.tag && untagged === Boolean(filters.untagged)) return;
       closeDetail();
       resetContactSheetSelection();
-      const next = { ...filters, tag };
+      const next = { ...filters, tag, untagged };
       setFilters(next);
       void fetchAchievements(next);
     },
@@ -912,7 +915,7 @@ export default function HomePage() {
     : 0;
   const storageWarning = usagePercent > 80;
   const hasAppliedScope = Boolean(
-    selectedCollection || filters.from || filters.to || filters.tag
+    selectedCollection || filters.from || filters.to || filters.tag || filters.untagged
   );
   const dateScope = filters.from && filters.to
     ? `${filters.from} to ${filters.to}`
@@ -1073,6 +1076,7 @@ export default function HomePage() {
               <span>Dates <strong>{dateScope}</strong></span>
             )}
             {filters.tag && <span>Tag <strong>#{filters.tag}</strong></span>}
+            {filters.untagged && <span>Tag <strong>Untagged</strong></span>}
           </div>
         )}
 
@@ -1109,7 +1113,7 @@ export default function HomePage() {
               items={items}
               loading={galleryLoading}
               hasMore={hasMore && !galleryError}
-              hasActiveFilters={Boolean(filters.q || filters.from || filters.to || filters.tag)}
+              hasActiveFilters={Boolean(filters.q || filters.from || filters.to || filters.tag || filters.untagged)}
               density={density}
               onLoadMore={() => void handleLoadMore()}
               onSelectAchievement={selectForDetail}
@@ -1241,6 +1245,7 @@ export default function HomePage() {
           <TagBrowser
             tags={tags}
             selectedTag={filters.tag}
+            selectedUntagged={Boolean(filters.untagged)}
             loading={tagLoading}
             error={tagError}
             onSelect={handleSelectTag}

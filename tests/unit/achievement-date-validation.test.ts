@@ -3,11 +3,21 @@ import {
   validateCalendarDate,
   validateCompletionDate,
   validateDateRange,
+  validateImageDescription,
 } from '@/lib/validation/achievement';
 
 afterEach(() => vi.useRealTimers());
 
 describe('achievement date validation', () => {
+  it('accepts optional concise image descriptions and rejects overlong values', () => {
+    expect(validateImageDescription(undefined)).toBe('');
+    expect(validateImageDescription('  A red boat on a misty lake.  ')).toBe(
+      'A red boat on a misty lake.'
+    );
+    expect(() => validateImageDescription('x'.repeat(501))).toThrow('cannot exceed 500 characters');
+    expect(() => validateImageDescription(42)).toThrow('must be a string');
+  });
+
   it('accepts a leap day and rejects impossible or malformed dates', () => {
     expect(validateCalendarDate('2024-02-29')).toBe('2024-02-29');
     for (const value of [

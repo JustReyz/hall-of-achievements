@@ -33,7 +33,14 @@ export async function GET(request: NextRequest) {
     throw err;
   }
   const q = url.searchParams.get('q')?.trim() || '';
-  const filters: GalleryFilters = { q, from: range.from, to: range.to, tag, sort };
+  const untaggedParam = url.searchParams.get('untagged');
+  if (untaggedParam !== null && untaggedParam !== 'true' && untaggedParam !== 'false') {
+    return jsonError('untagged must be true or false', 400, 'INVALID_INPUT');
+  }
+  if (untaggedParam === 'true' && tag) {
+    return jsonError('Choose either a tag or untagged filter', 400, 'INVALID_INPUT');
+  }
+  const filters: GalleryFilters = { q, from: range.from, to: range.to, tag, sort, untagged: untaggedParam === 'true' };
   const cursorParam = url.searchParams.get('cursor')?.trim();
   const limitParam = parseInt(url.searchParams.get('limit') || String(DEFAULT_PAGE_LIMIT), 10);
   const limit = isNaN(limitParam) || limitParam < 1 ? DEFAULT_PAGE_LIMIT : Math.min(limitParam, 50);
@@ -62,28 +69,23 @@ export async function GET(request: NextRequest) {
         conditions.push(
           or(
             gt(achievements.completionDate, cursorDate),
-            and(
-              eq(achievements.completionDate, cursorDate),
-              gt(achievements.id, cursorId)
-            )
+            and(eq(achievements.completionDate, cursorDate), gt(achievements.id, cursorId))
           )!
         );
       } else {
         conditions.push(
           or(
             lt(achievements.completionDate, cursorDate),
-            and(
-              eq(achievements.completionDate, cursorDate),
-              lt(achievements.id, cursorId)
-            )
+            and(eq(achievements.completionDate, cursorDate), lt(achievements.id, cursorId))
           )!
         );
       }
     }
 
-    const orderClause = sort === 'oldest'
-      ? [asc(achievements.completionDate), asc(achievements.id)]
-      : [desc(achievements.completionDate), desc(achievements.id)];
+    const orderClause =
+      sort === 'oldest'
+        ? [asc(achievements.completionDate), asc(achievements.id)]
+        : [desc(achievements.completionDate), desc(achievements.id)];
 
     const rows = await db
       .select({
@@ -91,6 +93,7 @@ export async function GET(request: NextRequest) {
         title: achievements.title,
         completionDate: achievements.completionDate,
         notes: achievements.notes,
+        imageDescription: achievements.imageDescription,
         tags: achievements.tags,
         thumbnailPositionX: achievements.thumbnailPositionX,
         thumbnailPositionY: achievements.thumbnailPositionY,

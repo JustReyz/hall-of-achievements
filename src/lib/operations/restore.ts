@@ -165,7 +165,6 @@ export function assertSafeStorageKey(key: string, context: string = 'Storage key
   return key;
 }
 
-
 function inferContentType(filePath: string, assetRecords?: Asset[]): string {
   const lower = filePath.toLowerCase();
   if (lower.endsWith('.webp')) return 'image/webp';
@@ -211,9 +210,9 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     );
   }
 
-  if (![1, 2, 3, 4].includes(manifest.version)) {
+  if (![1, 2, 3, 4, 5].includes(manifest.version)) {
     throw new IntegrityError(
-      `Unsupported manifest schema version: ${manifest.version}. Supported versions are 1, 2, 3, and 4.`
+      `Unsupported manifest schema version: ${manifest.version}. Supported versions are 1, 2, 3, 4, and 5.`
     );
   }
 
@@ -293,6 +292,16 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
 
   if (!Array.isArray(rawAchievements)) {
     throw new IntegrityError('metadata/achievements.json must contain an array of achievements.');
+  }
+  for (const achievement of rawAchievements) {
+    if (
+      achievement.imageDescription !== undefined &&
+      (typeof achievement.imageDescription !== 'string' ||
+        achievement.imageDescription.length > 500)
+    ) {
+      throw new IntegrityError(`Achievement '${achievement.id}' has an invalid image description.`);
+    }
+    achievement.imageDescription ??= '';
   }
 
   if (manifest.version >= 3) {
@@ -453,8 +462,7 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     for (const a of rawAchievements) {
       const thumbnailPositionX = manifest.version === 1 ? 0.5 : a.thumbnailPositionX;
       const thumbnailPositionY = manifest.version === 1 ? 0.5 : a.thumbnailPositionY;
-      const trashedAt =
-        manifest.version >= 3 && a.trashedAt ? new Date(a.trashedAt) : null;
+      const trashedAt = manifest.version >= 3 && a.trashedAt ? new Date(a.trashedAt) : null;
 
       await tx
         .insert(achievements)
@@ -463,6 +471,7 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
           title: a.title,
           completionDate: a.completionDate,
           notes: a.notes,
+          imageDescription: a.imageDescription,
           tags: a.tags,
           thumbnailPositionX,
           thumbnailPositionY,
@@ -477,6 +486,7 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
             title: a.title,
             completionDate: a.completionDate,
             notes: a.notes,
+            imageDescription: a.imageDescription,
             tags: a.tags,
             thumbnailPositionX,
             thumbnailPositionY,
@@ -589,7 +599,8 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     achievementsRestored: rawAchievements.length,
     assetsRestored: rawAssets.length,
     filesRestored:
-      binaryFilesRestored + manifest.files.filter((entry) => entry.path.startsWith('metadata/')).length,
+      binaryFilesRestored +
+      manifest.files.filter((entry) => entry.path.startsWith('metadata/')).length,
     totalSizeBytes: manifest.metadata.totalSizeBytes,
   };
 }

@@ -34,11 +34,20 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const collectionId = validateCollectionId(id);
     const url = new URL(request.url);
     const range = validateDateRange(url.searchParams.get('from'), url.searchParams.get('to'));
+    const untaggedParam = url.searchParams.get('untagged');
+    if (untaggedParam !== null && untaggedParam !== 'true' && untaggedParam !== 'false') {
+      return jsonError('untagged must be true or false', 400, 'INVALID_INPUT');
+    }
+    const selectedTag = validateTagFilter(url.searchParams.get('tag'));
+    if (untaggedParam === 'true' && selectedTag) {
+      return jsonError('Choose either a tag or untagged filter', 400, 'INVALID_INPUT');
+    }
     const filters: GalleryFilters = {
       q: url.searchParams.get('q')?.trim() || '',
       from: range.from,
       to: range.to,
-      tag: validateTagFilter(url.searchParams.get('tag')),
+      tag: selectedTag,
+      untagged: untaggedParam === 'true',
     };
     const limitParam = Number.parseInt(url.searchParams.get('limit') ?? '', 10);
     const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : undefined;

@@ -6,6 +6,7 @@ export interface GalleryFilters {
   from: string;
   to: string;
   tag: string;
+  untagged?: boolean;
   sort?: AchievementSort;
 }
 
@@ -14,6 +15,7 @@ export interface AchievementItem {
   title: string;
   completionDate: string;
   notes: string | null;
+  imageDescription?: string;
   tags: string[];
   thumbnailPositionX: number;
   thumbnailPositionY: number;
