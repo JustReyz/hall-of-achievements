@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import Link from 'next/link';
+import { prepareProfileImage } from '@/lib/finance/profile-image';
 import styles from './FinanceWorkspace.module.css';
 
 type Group = { id: string; name: string; role: 'owner' | 'admin' | 'member' };
@@ -573,9 +574,10 @@ export default function FinanceWorkspace() {
     const form = event.currentTarget;
     busyRef.current = true; setBusy(true); setError(null); setNotice(null);
     try {
+      const image = await prepareProfileImage(profileFile);
       const result = await request<{ profilePicture: string }>(
         '/api/finance/profile-picture',
-        { method: 'PUT', headers: { 'Content-Type': profileFile.type || 'application/octet-stream' }, body: profileFile },
+        { method: 'PUT', headers: { 'Content-Type': image.type || 'application/octet-stream' }, body: image },
       );
       setSession((current) => current?.user ? { ...current, user: { ...current.user, profilePicture: result.profilePicture } } : current);
       setProfileFile(null); form.reset(); setNotice('Foto profil disimpan.');
@@ -1198,7 +1200,7 @@ export default function FinanceWorkspace() {
               <p>{session.user?.username}</p>
               {session.user?.profilePicture && <img src={session.user.profilePicture} width={96} height={96} alt="Foto profil Anda" />}
               <form className={styles.form} onSubmit={(event) => void saveProfilePicture(event)}>
-                <label>Foto profil (JPEG, PNG, atau WebP, maksimal 2 MB)<input type="file" accept="image/jpeg,image/png,image/webp" required disabled={busy} onChange={(event) => setProfileFile(event.target.files?.[0] ?? null)} /></label>
+                <label>Foto profil (JPEG, PNG, WebP, atau JPEG XL, maksimal 2 MB)<input type="file" accept="image/jpeg,image/png,image/webp,image/jxl,.jxl" required disabled={busy} onChange={(event) => setProfileFile(event.target.files?.[0] ?? null)} /></label>
                 <button className={styles.button} disabled={busy || !profileFile}>Simpan foto</button>
               </form>
               {session.user?.profilePicture && <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void removeProfilePicture()}>Hapus foto</button>}
