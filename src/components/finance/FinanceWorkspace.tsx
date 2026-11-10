@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import Link from 'next/link';
 import styles from './FinanceWorkspace.module.css';
 
 type Group = { id: string; name: string; role: 'owner' | 'admin' | 'member' };
 type GroupMember = { id: string; username: string; role: 'owner' | 'admin' | 'member' };
-type FinanceSource = { id: string; name: string; type: 'cash' | 'e-wallet' | 'bank' | 'other' };
+type FinanceSource = { id: string; name: string; type: 'cash' | 'e-wallet' | 'bank' | 'other'; deletedAt?: string | null };
 type FinanceSummary = { totalIncome: string; totalExpense: string; balance: string; budgetRemaining: string | null };
 type GroupBudget = { monthlyLimit: string | null; currency: string; enabled: boolean };
 type Wallet = {
@@ -22,10 +23,14 @@ type Transaction = {
   amount: string;
   category?: string | null;
   sourceId?: string | null;
+  sourceName?: string | null;
   notes?: string | null;
   createdAt?: string;
   transactionDate?: string;
 };
+type FinanceNote = { id: string; groupId: string; title: string; content: string | null; targetAt: string | null; isPinned: boolean; isCompleted: boolean };
+type FinanceReminder = { id: string; noteId: string; remindAt: string; recurrence: string; status: string; message: string | null };
+type FinanceScheduledTask = { id: string; title: string; details: string | null; scheduleAt: string; recurrence: string; isActive: boolean; completedAt: string | null };
 type Session = { authenticated: boolean; user?: { id: string; username: string } };
 type TransactionList = { transactions: Transaction[]; hasMore: boolean };
 type RecoveredTransaction = {
@@ -69,6 +74,11 @@ async function assertFinanceUser(userId: string): Promise<void> {
 function todayLocal(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function localDateTimeNow(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 }
 
 class RequestError extends Error {
@@ -147,13 +157,30 @@ export default function FinanceWorkspace() {
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [walletId, setWalletId] = useState('');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [plannerNotes, setPlannerNotes] = useState<FinanceNote[]>([]);
+  const [plannerReminders, setPlannerReminders] = useState<FinanceReminder[]>([]);
+  const [plannerTasks, setPlannerTasks] = useState<FinanceScheduledTask[]>([]);
+  const [plannerLoading, setPlannerLoading] = useState(false);
+  const [noteTitle, setNoteTitle] = useState('');
+  const [noteContent, setNoteContent] = useState('');
+  const [noteTargetAt, setNoteTargetAt] = useState('');
+  const [reminderNoteId, setReminderNoteId] = useState('');
+  const [reminderAt, setReminderAt] = useState(localDateTimeNow);
+  const [reminderRecurrence, setReminderRecurrence] = useState<'none' | 'daily' | 'weekly' | 'monthly' | 'yearly'>('none');
+  const [reminderMessage, setReminderMessage] = useState('');
+  const [taskTitle, setTaskTitle] = useState('');
+  const [taskDetails, setTaskDetails] = useState('');
+  const [taskScheduleAt, setTaskScheduleAt] = useState(localDateTimeNow);
+  const [taskRecurrence, setTaskRecurrence] = useState<'once' | 'daily' | 'weekly' | 'monthly'>('once');
   const [hasMoreTransactions, setHasMoreTransactions] = useState(false);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [walletsLoading, setWalletsLoading] = useState(false);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [groupName, setGroupName] = useState('');
+  const [groupRename, setGroupRename] = useState('');
   const [sourceName, setSourceName] = useState('');
   const [sourceType, setSourceType] = useState<FinanceSource['type']>('bank');
+  const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
   const [members, setMembers] = useState<GroupMember[]>([]);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [walletName, setWalletName] = useState('');
@@ -275,6 +302,10 @@ export default function FinanceWorkspace() {
   }, [reportError]);
 
   useEffect(() => {
+    setGroupRename(groups.find((group) => group.id === groupId)?.name ?? '');
+  }, [groups, groupId]);
+
+  useEffect(() => {
     if (session?.authenticated) void refreshGroups();
     else {
       setGroups([]);
@@ -315,6 +346,29 @@ export default function FinanceWorkspace() {
       setBudgetEnabledInput(budgetResult.budget.enabled);
       setSummary(summaryResult.summary);
     }).catch((cause: unknown) => { if (!controller.signal.aborted) reportError(cause); });
+    return () => controller.abort();
+  }, [groupId, session?.authenticated, reportError]);
+
+  useEffect(() => {
+    setPlannerNotes([]);
+    setPlannerReminders([]);
+    setPlannerTasks([]);
+    setReminderNoteId('');
+    if (!groupId || !session?.authenticated) { setPlannerLoading(false); return; }
+    const controller = new AbortController();
+    setPlannerLoading(true);
+    const query = `groupId=${encodeURIComponent(groupId)}`;
+    void Promise.all([
+      request<{ notes: FinanceNote[] }>(`/api/finance/planner/notes?${query}`, { signal: controller.signal }),
+      request<{ reminders: FinanceReminder[] }>(`/api/finance/planner/reminders?${query}`, { signal: controller.signal }),
+      request<{ tasks: FinanceScheduledTask[] }>(`/api/finance/planner/scheduled-tasks?${query}`, { signal: controller.signal }),
+    ]).then(([notesResult, remindersResult, tasksResult]) => {
+      setPlannerNotes(notesResult.notes);
+      setPlannerReminders(remindersResult.reminders);
+      setReminderNoteId((current) => notesResult.notes.some((note) => note.id === current) ? current : (notesResult.notes[0]?.id ?? ''));
+      setPlannerTasks(tasksResult.tasks);
+    }).catch((cause: unknown) => { if (!controller.signal.aborted) reportError(cause); })
+      .finally(() => { if (!controller.signal.aborted) setPlannerLoading(false); });
     return () => controller.abort();
   }, [groupId, session?.authenticated, reportError]);
 
@@ -369,6 +423,20 @@ export default function FinanceWorkspace() {
     if (!groupId) return;
     const result = await request<{ summary: FinanceSummary }>(`/api/finance/summary?groupId=${encodeURIComponent(groupId)}`);
     setSummary(result.summary);
+  }, [groupId]);
+
+  const refreshPlanner = useCallback(async () => {
+    if (!groupId) return;
+    const query = `groupId=${encodeURIComponent(groupId)}`;
+    const [notesResult, remindersResult, tasksResult] = await Promise.all([
+      request<{ notes: FinanceNote[] }>(`/api/finance/planner/notes?${query}`),
+      request<{ reminders: FinanceReminder[] }>(`/api/finance/planner/reminders?${query}`),
+      request<{ tasks: FinanceScheduledTask[] }>(`/api/finance/planner/scheduled-tasks?${query}`),
+    ]);
+    setPlannerNotes(notesResult.notes);
+    setPlannerReminders(remindersResult.reminders);
+    setReminderNoteId((current) => notesResult.notes.some((note) => note.id === current) ? current : (notesResult.notes[0]?.id ?? ''));
+    setPlannerTasks(tasksResult.tasks);
   }, [groupId]);
 
   useEffect(() => {
@@ -474,6 +542,108 @@ export default function FinanceWorkspace() {
     }
   };
 
+  const saveFinanceSource = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!editingSourceId || busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try {
+      const result = await request<{ source: FinanceSource }>(`/api/finance/sources/${editingSourceId}`, { method: 'PATCH', body: JSON.stringify({ name: sourceName.trim(), type: sourceType }) });
+      setSources((current) => current.map((source) => source.id === result.source.id ? result.source : source));
+      setEditingSourceId(null); setSourceName(''); setNotice('Sumber transaksi diperbarui.');
+    } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const removeFinanceSource = async (source: FinanceSource) => {
+    if (busyRef.current || !window.confirm(`Nonaktifkan sumber “${source.name}”? Transaksi lama tetap mencatat nama sumber ini.`)) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try {
+      await request(`/api/finance/sources/${source.id}`, { method: 'DELETE' });
+      setSources((current) => current.filter((item) => item.id !== source.id));
+      if (sourceId === source.id) setSourceId('');
+      setNotice('Sumber dinonaktifkan; riwayat transaksi tetap tersimpan.');
+    } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const createPlannerNote = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!groupId || busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try {
+      await request('/api/finance/planner/notes', { method: 'POST', body: JSON.stringify({ groupId, title: noteTitle.trim(), content: noteContent.trim() || null, targetAt: noteTargetAt ? new Date(noteTargetAt).toISOString() : null }) });
+      setNoteTitle(''); setNoteContent(''); setNoteTargetAt('');
+      await refreshPlanner(); setNotice('Catatan planner disimpan.');
+    } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const updatePlannerNote = async (note: FinanceNote, changes: Record<string, unknown>) => {
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try {
+      await request(`/api/finance/planner/notes/${note.id}`, { method: 'PATCH', body: JSON.stringify(changes) });
+      await refreshPlanner(); setNotice('Catatan diperbarui.');
+    } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const removePlannerNote = async (note: FinanceNote) => {
+    if (busyRef.current || !window.confirm('Hapus catatan dan pengingat terkait?')) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try {
+      await request(`/api/finance/planner/notes/${note.id}`, { method: 'DELETE' });
+      await refreshPlanner(); setNotice('Catatan dan pengingat terkait dihapus.');
+    } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const createPlannerReminder = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!groupId || !reminderNoteId || busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try {
+      await request('/api/finance/planner/reminders', { method: 'POST', body: JSON.stringify({ groupId, noteId: reminderNoteId, reminderType: reminderRecurrence === 'none' ? 'relative' : 'recurring', recurrence: reminderRecurrence, remindAt: new Date(reminderAt).toISOString(), message: reminderMessage.trim() || null }) });
+      setReminderMessage(''); await refreshPlanner(); setNotice('Pengingat tersimpan. Tidak ada notifikasi yang dikirim otomatis.');
+    } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const cancelPlannerReminder = async (id: string) => {
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try { await request(`/api/finance/planner/reminders/${id}`, { method: 'DELETE' }); await refreshPlanner(); setNotice('Pengingat dibatalkan.'); }
+    catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const createPlannerTask = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!groupId || busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try {
+      await request('/api/finance/planner/scheduled-tasks', { method: 'POST', body: JSON.stringify({ groupId, title: taskTitle.trim(), details: taskDetails.trim() || null, scheduleAt: new Date(taskScheduleAt).toISOString(), recurrence: taskRecurrence }) });
+      setTaskTitle(''); setTaskDetails(''); await refreshPlanner(); setNotice('Tugas terjadwal disimpan.');
+    } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const updatePlannerTask = async (task: FinanceScheduledTask, changes: Record<string, unknown>) => {
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try { await request(`/api/finance/planner/scheduled-tasks/${task.id}`, { method: 'PATCH', body: JSON.stringify(changes) }); await refreshPlanner(); setNotice('Tugas diperbarui.'); }
+    catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const removePlannerTask = async (task: FinanceScheduledTask) => {
+    if (busyRef.current || !window.confirm('Hapus tugas terjadwal ini?')) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try { await request(`/api/finance/planner/scheduled-tasks/${task.id}`, { method: 'DELETE' }); await refreshPlanner(); setNotice('Tugas dihapus.'); }
+    catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
   const saveGroupBudget = async (event: FormEvent) => {
     event.preventDefault();
     if (!groupId || busyRef.current) return;
@@ -535,6 +705,57 @@ export default function FinanceWorkspace() {
       busyRef.current = false;
       setBusy(false);
     }
+  };
+
+  const renameGroup = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!groupId || busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try {
+      await request(`/api/finance/groups/${groupId}`, { method: 'PATCH', body: JSON.stringify({ name: groupRename.trim() }) });
+      await refreshGroups(); setNotice('Nama grup diperbarui.');
+    } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const removeGroup = async () => {
+    if (!groupId || busyRef.current || !window.confirm('Hapus grup kosong ini? Grup yang berisi dompet tidak dapat dihapus.')) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try { await request(`/api/finance/groups/${groupId}`, { method: 'DELETE' }); await refreshGroups(); setNotice('Grup kosong dihapus.'); }
+    catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const changeMemberRole = async (member: GroupMember, role: 'admin' | 'member') => {
+    if (!groupId || busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try {
+      await request(`/api/finance/groups/${groupId}/members/${member.id}`, { method: 'PATCH', body: JSON.stringify({ role }) });
+      const result = await request<{ members: GroupMember[] }>(`/api/finance/invitations?groupId=${encodeURIComponent(groupId)}`);
+      setMembers(result.members); setNotice('Peran anggota diperbarui.');
+    } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const removeMember = async (member: GroupMember) => {
+    if (!groupId || busyRef.current || !window.confirm(`Keluarkan ${member.username} dari grup? Riwayat transaksinya tetap disimpan.`)) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try {
+      await request(`/api/finance/groups/${groupId}/members/${member.id}`, { method: 'DELETE' });
+      const result = await request<{ members: GroupMember[] }>(`/api/finance/invitations?groupId=${encodeURIComponent(groupId)}`);
+      setMembers(result.members); setNotice('Anggota dikeluarkan dari grup.');
+    } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const revokeInvitations = async () => {
+    if (!groupId || busyRef.current || !window.confirm('Cabut semua tautan undangan yang belum dipakai?')) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try {
+      const result = await request<{ revoked: number }>(`/api/finance/invitations?groupId=${encodeURIComponent(groupId)}`, { method: 'DELETE' });
+      setInviteUrl(null); setNotice(`${result.revoked} undangan dicabut.`);
+    } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
   };
 
   const createWallet = async (event: FormEvent) => {
@@ -828,13 +1049,14 @@ export default function FinanceWorkspace() {
   };
 
   const selectedWallet = wallets.find((wallet) => wallet.id === walletId);
+  const selectedGroup = groups.find((group) => group.id === groupId);
   return (
     <div className={styles.page} lang="id">
       <header className={styles.header}>
         <div className={styles.headerInner}>
           <p className={styles.brand}>Hall of Achievements</p>
           <nav className={styles.nav} aria-label="Navigasi utama">
-            <a href="/">Kembali ke galeri</a>
+            <Link href="/">Kembali ke galeri</Link>
             {session?.authenticated && (
               <button
                 className={`${styles.button} ${styles.quiet}`}
@@ -992,14 +1214,31 @@ export default function FinanceWorkspace() {
                   </button>
                 </form>
               </details>
+              {groupId && ['owner', 'admin'].includes(selectedGroup?.role ?? '') && (
+                <details className={styles.details}>
+                  <summary>Kelola grup</summary>
+                  <form className={styles.form} onSubmit={(event) => void renameGroup(event)}>
+                    <label>Nama grup<input required maxLength={120} disabled={busy} value={groupRename} onChange={(event) => setGroupRename(event.target.value)} /></label>
+                    <button className={styles.button} disabled={busy}>Simpan nama grup</button>
+                  </form>
+                  {selectedGroup?.role === 'owner' && <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void removeGroup()}>Hapus grup kosong</button>}
+                </details>
+              )}
               {groupId && (
                 <div className={styles.details}>
                   <h3 className={styles.sectionHeading}>Anggota</h3>
                   <ul className={styles.list}>
                     {members.map((member) => (
                       <li className={styles.row} key={member.id}>
-                        <strong>{member.username}</strong>
-                        <span className={styles.subtle}>{member.role}</span>
+                        <div><strong>{member.username}</strong><small>{member.role}</small></div>
+                        <div className={styles.rowActions}>
+                          {selectedGroup?.role === 'owner' && member.role !== 'owner' && (
+                            <label className={styles.inlineField}>Peran<select aria-label={`Peran ${member.username}`} disabled={busy} value={member.role} onChange={(event) => void changeMemberRole(member, event.target.value as 'admin' | 'member')}><option value="member">Anggota</option><option value="admin">Admin</option></select></label>
+                          )}
+                          {member.role !== 'owner' && (selectedGroup?.role === 'owner' || (selectedGroup?.role === 'admin' && member.role === 'member')) && (
+                            <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void removeMember(member)}>Keluarkan</button>
+                          )}
+                        </div>
                       </li>
                     ))}
                   </ul>
@@ -1009,6 +1248,7 @@ export default function FinanceWorkspace() {
                       <button className={styles.button} disabled={busy} onClick={() => void createInvitation()}>
                         Buat undangan anggota
                       </button>
+                      <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void revokeInvitations()}>Cabut semua undangan aktif</button>
                       {inviteUrl && (
                         <div className={styles.form}>
                           <label>
@@ -1054,7 +1294,18 @@ export default function FinanceWorkspace() {
                   )}
                   <h3 className={styles.sectionHeading}>Sumber transaksi</h3>
                   {sources.length ? (
-                    <ul className={styles.list}>{sources.map((source) => <li key={source.id} className={styles.row}><strong>{source.name}</strong><span className={styles.subtle}>{source.type}</span></li>)}</ul>
+                    <ul className={styles.list}>{sources.map((source) => <li key={source.id} className={styles.row}>
+                      <div><strong>{source.name}</strong><small>{source.type}</small></div>
+                      {['owner', 'admin'].includes(selectedGroup?.role ?? '') && <div className={styles.rowActions}>
+                        <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => { setEditingSourceId(source.id); setSourceName(source.name); setSourceType(source.type); }}>Ubah</button>
+                        <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void removeFinanceSource(source)}>Nonaktifkan</button>
+                      </div>}
+                      {editingSourceId === source.id && <form className={styles.form} onSubmit={(event) => void saveFinanceSource(event)}>
+                        <label>Nama sumber<input required maxLength={100} disabled={busy} value={sourceName} onChange={(event) => setSourceName(event.target.value)} /></label>
+                        <label>Jenis sumber<select disabled={busy} value={sourceType} onChange={(event) => setSourceType(event.target.value as FinanceSource['type'])}><option value="cash">Tunai</option><option value="e-wallet">Dompet digital</option><option value="bank">Bank</option><option value="other">Lainnya</option></select></label>
+                        <div className={styles.rowActions}><button className={styles.button} disabled={busy}>Simpan sumber</button><button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => setEditingSourceId(null)}>Batal</button></div>
+                      </form>}
+                    </li>)}</ul>
                   ) : <p className={styles.empty}>Belum ada sumber transaksi.</p>}
                   {['owner', 'admin'].includes(groups.find((group) => group.id === groupId)?.role ?? '') && (
                     <details className={styles.details}>
@@ -1222,7 +1473,7 @@ export default function FinanceWorkspace() {
                             (transaction.createdAt
                               ? new Date(transaction.createdAt).toLocaleDateString('id-ID')
                               : '')}
-                          {transaction.sourceId ? ` · ${sources.find((source) => source.id === transaction.sourceId)?.name ?? 'Sumber'}` : ''}
+                          {transaction.sourceId ? ` · ${transaction.sourceName ?? sources.find((source) => source.id === transaction.sourceId)?.name ?? 'Sumber'}` : ''}
                         </small>
                       </div>
                       <span className={styles.amount}>
@@ -1391,6 +1642,80 @@ export default function FinanceWorkspace() {
                     </p>
                   </form>
                 </details>
+              )}
+            </section>
+            <section className={`${styles.panel} ${styles.wide}`} aria-labelledby="planner-heading">
+              <div className={styles.panelHeader}>
+                <h2 id="planner-heading" className={styles.sectionHeading}>Planner</h2>
+                <span className={styles.subtle}>Pengingat disimpan sebagai jadwal; tidak ada pesan otomatis yang dikirim.</span>
+              </div>
+              {plannerLoading ? <p role="status" className={styles.empty}>Memuat planner…</p> : (
+                <div className={styles.plannerGrid}>
+                  <div>
+                    <h3>Catatan</h3>
+                    {plannerNotes.length ? <ul className={styles.list}>{plannerNotes.map((note) => (
+                      <li className={styles.row} key={note.id}>
+                        <div><strong>{note.title}</strong><small>{note.content || 'Tanpa rincian'}{note.targetAt ? ` · ${new Date(note.targetAt).toLocaleString('id-ID')}` : ''}{note.isPinned ? ' · Disematkan' : ''}{note.isCompleted ? ' · Selesai' : ''}</small></div>
+                        <div className={styles.rowActions}>
+                          <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void updatePlannerNote(note, { isCompleted: !note.isCompleted })}>{note.isCompleted ? 'Buka kembali' : 'Selesaikan'}</button>
+                          <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void updatePlannerNote(note, { isPinned: !note.isPinned })}>{note.isPinned ? 'Lepas pin' : 'Sematkan'}</button>
+                          <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void removePlannerNote(note)}>Hapus</button>
+                        </div>
+                      </li>
+                    ))}</ul> : <p className={styles.empty}>Belum ada catatan.</p>}
+                    <details className={styles.details}>
+                      <summary>Tambah catatan</summary>
+                      <form className={styles.form} onSubmit={(event) => void createPlannerNote(event)}>
+                        <label>Judul<input required maxLength={200} disabled={busy} value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} /></label>
+                        <label>Rincian<textarea maxLength={10000} disabled={busy} value={noteContent} onChange={(event) => setNoteContent(event.target.value)} /></label>
+                        <label>Target waktu (opsional)<input type="datetime-local" disabled={busy} value={noteTargetAt} onChange={(event) => setNoteTargetAt(event.target.value)} /></label>
+                        <button className={styles.button} disabled={busy}>Simpan catatan</button>
+                      </form>
+                    </details>
+                  </div>
+                  <div>
+                    <h3>Pengingat</h3>
+                    {plannerReminders.length ? <ul className={styles.list}>{plannerReminders.map((reminder) => (
+                      <li className={styles.row} key={reminder.id}>
+                        <div><strong>{plannerNotes.find((note) => note.id === reminder.noteId)?.title ?? 'Catatan'}</strong><small>{new Date(reminder.remindAt).toLocaleString('id-ID')} · {reminder.recurrence === 'none' ? 'Sekali' : `Berulang ${reminder.recurrence}`} · {reminder.status === 'cancelled' ? 'Dibatalkan' : reminder.status === 'sent' ? 'Terkirim' : 'Menunggu'}</small></div>
+                        {reminder.status === 'pending' && <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void cancelPlannerReminder(reminder.id)}>Batalkan</button>}
+                      </li>
+                    ))}</ul> : <p className={styles.empty}>Belum ada pengingat.</p>}
+                    {plannerNotes.length > 0 && <details className={styles.details}>
+                      <summary>Tambah pengingat</summary>
+                      <form className={styles.form} onSubmit={(event) => void createPlannerReminder(event)}>
+                        <label>Catatan<select required disabled={busy} value={reminderNoteId} onChange={(event) => setReminderNoteId(event.target.value)}>{plannerNotes.map((note) => <option key={note.id} value={note.id}>{note.title}</option>)}</select></label>
+                        <label>Waktu pengingat<input required type="datetime-local" disabled={busy} value={reminderAt} onChange={(event) => setReminderAt(event.target.value)} /></label>
+                        <label>Pengulangan<select disabled={busy} value={reminderRecurrence} onChange={(event) => setReminderRecurrence(event.target.value as typeof reminderRecurrence)}><option value="none">Sekali</option><option value="daily">Harian</option><option value="weekly">Mingguan</option><option value="monthly">Bulanan</option><option value="yearly">Tahunan</option></select></label>
+                        <label>Pesan (opsional)<input maxLength={1000} disabled={busy} value={reminderMessage} onChange={(event) => setReminderMessage(event.target.value)} /></label>
+                        <button className={styles.button} disabled={busy}>Simpan pengingat</button>
+                      </form>
+                    </details>}
+                  </div>
+                  <div>
+                    <h3>Tugas terjadwal</h3>
+                    {plannerTasks.length ? <ul className={styles.list}>{plannerTasks.map((task) => (
+                      <li className={styles.row} key={task.id}>
+                        <div><strong>{task.title}</strong><small>{task.details || 'Tanpa rincian'} · {new Date(task.scheduleAt).toLocaleString('id-ID')} · {task.recurrence}</small></div>
+                        <div className={styles.rowActions}>
+                          <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void updatePlannerTask(task, { completedAt: task.completedAt ? null : new Date().toISOString() })}>{task.completedAt ? 'Buka kembali' : 'Selesaikan'}</button>
+                          <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void updatePlannerTask(task, { isActive: !task.isActive })}>{task.isActive ? 'Nonaktifkan' : 'Aktifkan'}</button>
+                          <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void removePlannerTask(task)}>Hapus</button>
+                        </div>
+                      </li>
+                    ))}</ul> : <p className={styles.empty}>Belum ada tugas.</p>}
+                    <details className={styles.details}>
+                      <summary>Tambah tugas</summary>
+                      <form className={styles.form} onSubmit={(event) => void createPlannerTask(event)}>
+                        <label>Judul<input required maxLength={200} disabled={busy} value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} /></label>
+                        <label>Rincian<textarea maxLength={10000} disabled={busy} value={taskDetails} onChange={(event) => setTaskDetails(event.target.value)} /></label>
+                        <label>Jadwal<input required type="datetime-local" disabled={busy} value={taskScheduleAt} onChange={(event) => setTaskScheduleAt(event.target.value)} /></label>
+                        <label>Pengulangan<select disabled={busy} value={taskRecurrence} onChange={(event) => setTaskRecurrence(event.target.value as typeof taskRecurrence)}><option value="once">Sekali</option><option value="daily">Harian</option><option value="weekly">Mingguan</option><option value="monthly">Bulanan</option></select></label>
+                        <button className={styles.button} disabled={busy}>Simpan tugas</button>
+                      </form>
+                    </details>
+                  </div>
+                </div>
               )}
             </section>
           </div>

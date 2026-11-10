@@ -69,6 +69,70 @@ export async function createGroup(db: AppDatabase, context: FinanceSessionContex
   });
 }
 
+export async function updateGroup(db: AppDatabase, context: FinanceSessionContext, idValue: unknown, input: Record<string, unknown>) {
+  const id = requireUuid(idValue, 'groupId');
+  const name = textValue(input.name, 'Name', 120, true)!;
+  return db.transaction(async (tx) => {
+    await lockFinanceSession(tx, context);
+    await tx.select({ id: financeGroups.id }).from(financeGroups).where(eq(financeGroups.id, id)).for('update');
+    await requireGroupManager(tx, id, context.userId);
+    const [updated] = await tx.update(financeGroups).set({ name, updatedAt: new Date() }).where(eq(financeGroups.id, id)).returning({ id: financeGroups.id, name: financeGroups.name });
+    if (!updated) throw new FinanceLedgerError('NOT_FOUND', 'Group not found.', 404);
+    await lockFinanceSession(tx, context);
+    return updated;
+  });
+}
+
+export async function deleteGroup(db: AppDatabase, context: FinanceSessionContext, idValue: unknown) {
+  const id = requireUuid(idValue, 'groupId');
+  return db.transaction(async (tx) => {
+    await lockFinanceSession(tx, context);
+    const [group] = await tx.select({ id: financeGroups.id }).from(financeGroups).where(eq(financeGroups.id, id)).for('update');
+    if (!group) throw new FinanceLedgerError('NOT_FOUND', 'Group not found.', 404);
+    await requireGroupOwner(tx, id, context.userId);
+    const [wallet] = await tx.select({ id: financeWallets.id }).from(financeWallets).where(eq(financeWallets.groupId, id)).limit(1);
+    const [transaction] = await tx.select({ id: financeTransactions.id }).from(financeTransactions).where(eq(financeTransactions.groupId, id)).limit(1);
+    if (wallet || transaction) throw new FinanceLedgerError('GROUP_HAS_DATA', 'Groups with wallets or transaction history cannot be deleted.', 409);
+    await tx.delete(financeGroups).where(eq(financeGroups.id, id));
+    await lockFinanceSession(tx, context);
+    return { id, deleted: true };
+  });
+}
+
+export async function updateGroupMemberRole(db: AppDatabase, context: FinanceSessionContext, groupIdValue: unknown, userIdValue: unknown, roleValue: unknown) {
+  const groupId = requireUuid(groupIdValue, 'groupId');
+  const userId = requireUuid(userIdValue, 'userId');
+  if (roleValue !== 'admin' && roleValue !== 'member') throw new FinanceLedgerError('INVALID_INPUT', 'Role must be admin or member.', 400);
+  return db.transaction(async (tx) => {
+    await lockFinanceSession(tx, context);
+    await requireGroupOwner(tx, groupId, context.userId);
+    const [target] = await tx.select({ role: financeGroupMembers.role }).from(financeGroupMembers)
+      .where(and(eq(financeGroupMembers.groupId, groupId), eq(financeGroupMembers.userId, userId))).for('update');
+    if (!target || target.role === 'owner') throw new FinanceLedgerError('NOT_FOUND', 'Member not found.', 404);
+    await tx.update(financeGroupMembers).set({ role: roleValue }).where(and(eq(financeGroupMembers.groupId, groupId), eq(financeGroupMembers.userId, userId)));
+    await lockFinanceSession(tx, context);
+    return { groupId, userId, role: roleValue };
+  });
+}
+
+export async function removeGroupMember(db: AppDatabase, context: FinanceSessionContext, groupIdValue: unknown, userIdValue: unknown) {
+  const groupId = requireUuid(groupIdValue, 'groupId');
+  const userId = requireUuid(userIdValue, 'userId');
+  return db.transaction(async (tx) => {
+    await lockFinanceSession(tx, context);
+    await requireGroupManager(tx, groupId, context.userId);
+    const [actor] = await tx.select({ role: financeGroupMembers.role }).from(financeGroupMembers)
+      .where(and(eq(financeGroupMembers.groupId, groupId), eq(financeGroupMembers.userId, context.userId)));
+    const [target] = await tx.select({ role: financeGroupMembers.role }).from(financeGroupMembers)
+      .where(and(eq(financeGroupMembers.groupId, groupId), eq(financeGroupMembers.userId, userId))).for('update');
+    if (!target || target.role === 'owner' || (target.role === 'admin' && actor?.role !== 'owner'))
+      throw new FinanceLedgerError('NOT_FOUND', 'Member not found.', 404);
+    await tx.delete(financeGroupMembers).where(and(eq(financeGroupMembers.groupId, groupId), eq(financeGroupMembers.userId, userId)));
+    await lockFinanceSession(tx, context);
+    return { groupId, userId, removed: true };
+  });
+}
+
 export async function listWallets(db: AppDatabase, userId: string, groupId: string) {
   const [membership] = await db.select({ id: financeGroupMembers.groupId }).from(financeGroupMembers)
     .where(and(eq(financeGroupMembers.groupId, groupId), eq(financeGroupMembers.userId, userId)));
@@ -99,9 +163,7 @@ export async function createWallet(db: AppDatabase, context: FinanceSessionConte
   }
   return db.transaction(async (tx) => {
     await lockFinanceSession(tx, context);
-    const [member] = await tx.select({ role: financeGroupMembers.role }).from(financeGroupMembers)
-      .where(and(eq(financeGroupMembers.groupId, groupId), eq(financeGroupMembers.userId, context.userId))).for('update');
-    if (!member) throw new FinanceLedgerError('NOT_FOUND', 'Group not found.', 404);
+    await requireGroupManager(tx, groupId, context.userId);
     const [wallet] = await tx.insert(financeWallets).values({ groupId, name, type, targetAmount }).returning();
     if (!wallet) throw new Error('Could not create wallet');
     await lockFinanceSession(tx, context);
@@ -115,9 +177,7 @@ export async function updateWallet(db: AppDatabase, context: FinanceSessionConte
     await lockFinanceSession(tx, context);
     const [current] = await tx.select().from(financeWallets).where(eq(financeWallets.id, id)).for('update');
     if (!current) throw new FinanceLedgerError('NOT_FOUND', 'Wallet not found.', 404);
-    const [member] = await tx.select({ id: financeGroupMembers.groupId }).from(financeGroupMembers)
-      .where(and(eq(financeGroupMembers.groupId, current.groupId), eq(financeGroupMembers.userId, context.userId))).for('update');
-    if (!member) throw new FinanceLedgerError('NOT_FOUND', 'Wallet not found.', 404);
+    await requireGroupManager(tx, current.groupId, context.userId);
     const name = input.name === undefined ? current.name : textValue(input.name, 'Name', 120, true)!;
     const type = input.type === undefined ? current.type : input.type;
     if (type !== 'regular' && type !== 'goal') throw new FinanceLedgerError('INVALID_INPUT', 'Wallet type must be regular or goal.', 400);
@@ -138,9 +198,7 @@ export async function deleteWallet(db: AppDatabase, context: FinanceSessionConte
     await lockFinanceSession(tx, context);
     const [wallet] = await tx.select().from(financeWallets).where(eq(financeWallets.id, id)).for('update');
     if (!wallet) throw new FinanceLedgerError('NOT_FOUND', 'Wallet not found.', 404);
-    const [member] = await tx.select({ id: financeGroupMembers.groupId }).from(financeGroupMembers)
-      .where(and(eq(financeGroupMembers.groupId, wallet.groupId), eq(financeGroupMembers.userId, context.userId))).for('update');
-    if (!member) throw new FinanceLedgerError('NOT_FOUND', 'Wallet not found.', 404);
+    await requireGroupManager(tx, wallet.groupId, context.userId);
     const [transaction] = await tx.select({ id: financeTransactions.id }).from(financeTransactions)
       .where(eq(financeTransactions.walletId, id)).limit(1);
     if (transaction) throw new FinanceLedgerError('WALLET_HAS_HISTORY', 'Wallets with transaction history cannot be deleted.', 409);
@@ -156,10 +214,12 @@ export async function listTransactions(db: AppDatabase, userId: string, walletId
     .where(eq(financeWallets.id, walletId));
   if (!wallet) throw new FinanceLedgerError('NOT_FOUND', 'Wallet not found.', 404);
   return db.select({ id: financeTransactions.id, type: financeTransactions.type, amount: financeTransactions.amount, sourceId: financeTransactions.sourceId,
+    sourceName: financeSources.name,
     category: financeTransactions.category, notes: financeTransactions.note, transactionDate: financeTransactions.transactionDate,
     createdAt: financeTransactions.createdAt }).from(financeTransactions)
     .innerJoin(financeWallets, eq(financeWallets.id, financeTransactions.walletId))
     .innerJoin(financeGroupMembers, and(eq(financeGroupMembers.groupId, financeWallets.groupId), eq(financeGroupMembers.userId, userId)))
+    .leftJoin(financeSources, eq(financeSources.id, financeTransactions.sourceId))
     .where(and(eq(financeTransactions.walletId, walletId), isNull(financeTransactions.deletedAt)))
     .orderBy(desc(financeTransactions.transactionDate), desc(financeTransactions.createdAt), desc(financeTransactions.id)).limit(201);
 }
@@ -318,6 +378,12 @@ async function requireGroupManager(tx: FinanceTx, groupId: string, userId: strin
   if (member?.role !== 'owner' && member?.role !== 'admin') throw new FinanceLedgerError('NOT_FOUND', 'Group not found.', 404);
 }
 
+async function requireGroupOwner(tx: FinanceTx, groupId: string, userId: string): Promise<void> {
+  const [member] = await tx.select({ role: financeGroupMembers.role }).from(financeGroupMembers)
+    .where(and(eq(financeGroupMembers.groupId, groupId), eq(financeGroupMembers.userId, userId))).for('update');
+  if (member?.role !== 'owner') throw new FinanceLedgerError('NOT_FOUND', 'Group not found.', 404);
+}
+
 export async function listSources(db: AppDatabase, userId: string, groupId: string) {
   const [member] = await db.select({ id: financeGroupMembers.groupId }).from(financeGroupMembers)
     .where(and(eq(financeGroupMembers.groupId, groupId), eq(financeGroupMembers.userId, userId)));
@@ -343,6 +409,38 @@ export async function createSource(db: AppDatabase, context: FinanceSessionConte
     if (!source) throw new Error('Could not create source.');
     await lockFinanceSession(tx, context);
     return source;
+  });
+}
+
+export async function updateSource(db: AppDatabase, context: FinanceSessionContext, idValue: unknown, input: Record<string, unknown>) {
+  const id = requireUuid(idValue, 'sourceId');
+  const name = textValue(input.name, 'Name', 100, true)!;
+  const type = input.type;
+  if (type !== 'cash' && type !== 'e-wallet' && type !== 'bank' && type !== 'other') throw new FinanceLedgerError('INVALID_INPUT', 'Source type is invalid.', 400);
+  return db.transaction(async (tx) => {
+    await lockFinanceSession(tx, context);
+    const [current] = await tx.select().from(financeSources).where(eq(financeSources.id, id)).for('update');
+    if (!current || current.deletedAt) throw new FinanceLedgerError('NOT_FOUND', 'Source not found.', 404);
+    await requireGroupManager(tx, current.groupId, context.userId);
+    const [duplicate] = await tx.select({ id: financeSources.id }).from(financeSources)
+      .where(and(eq(financeSources.groupId, current.groupId), eq(financeSources.name, name), ne(financeSources.id, id)));
+    if (duplicate) throw new FinanceLedgerError('SOURCE_EXISTS', 'A source with this name already exists in the group.', 409);
+    await tx.update(financeSources).set({ name, type, updatedAt: new Date() }).where(eq(financeSources.id, id));
+    await lockFinanceSession(tx, context);
+    return { id, groupId: current.groupId, name, type };
+  });
+}
+
+export async function deleteSource(db: AppDatabase, context: FinanceSessionContext, idValue: unknown) {
+  const id = requireUuid(idValue, 'sourceId');
+  return db.transaction(async (tx) => {
+    await lockFinanceSession(tx, context);
+    const [current] = await tx.select().from(financeSources).where(eq(financeSources.id, id)).for('update');
+    if (!current || current.deletedAt) throw new FinanceLedgerError('NOT_FOUND', 'Source not found.', 404);
+    await requireGroupManager(tx, current.groupId, context.userId);
+    await tx.update(financeSources).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(financeSources.id, id));
+    await lockFinanceSession(tx, context);
+    return { id, deleted: true };
   });
 }
 

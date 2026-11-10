@@ -190,15 +190,66 @@ const FINANCE_SCHEMA_UPGRADES = [
     ON finance_transactions (created_by, idempotency_key)`,
   `CREATE INDEX IF NOT EXISTS idx_finance_transactions_wallet_date
     ON finance_transactions (wallet_id, transaction_date, id)`,
+  `CREATE TABLE IF NOT EXISTS finance_notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES finance_groups(id) ON DELETE CASCADE,
+    created_by UUID NOT NULL REFERENCES finance_users(id),
+    title VARCHAR(200) NOT NULL,
+    content TEXT,
+    target_at TIMESTAMPTZ,
+    is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
+    is_completed BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_finance_notes_group_id ON finance_notes(group_id, id)`,
+  `CREATE INDEX IF NOT EXISTS idx_finance_notes_group_target ON finance_notes(group_id, target_at)`,
+  `CREATE TABLE IF NOT EXISTS finance_note_reminders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL,
+    note_id UUID NOT NULL,
+    created_by UUID NOT NULL,
+    reminder_type VARCHAR(16) NOT NULL DEFAULT 'relative' CHECK (reminder_type IN ('relative', 'recurring')),
+    lead_minutes INTEGER,
+    remind_at TIMESTAMPTZ NOT NULL,
+    recurrence VARCHAR(16) NOT NULL DEFAULT 'none' CHECK (recurrence IN ('none', 'daily', 'weekly', 'monthly', 'yearly')),
+    until_date DATE,
+    message TEXT,
+    status VARCHAR(16) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'cancelled')),
+    delivered_count INTEGER NOT NULL DEFAULT 0 CHECK (delivered_count >= 0),
+    last_notified_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT finance_note_reminders_note_group_fk FOREIGN KEY (group_id, note_id) REFERENCES finance_notes(group_id, id) ON DELETE CASCADE,
+    CONSTRAINT finance_note_reminders_member_group_fk FOREIGN KEY (group_id, created_by) REFERENCES finance_group_members(group_id, user_id) ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_finance_note_reminders_due ON finance_note_reminders(status, remind_at)`,
+  `CREATE TABLE IF NOT EXISTS finance_scheduled_tasks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES finance_groups(id) ON DELETE CASCADE,
+    created_by UUID NOT NULL,
+    title VARCHAR(200) NOT NULL,
+    details TEXT,
+    schedule_at TIMESTAMPTZ NOT NULL,
+    recurrence VARCHAR(16) NOT NULL DEFAULT 'once' CHECK (recurrence IN ('once', 'daily', 'weekly', 'monthly')),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    last_notified_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT finance_scheduled_tasks_member_group_fk FOREIGN KEY (group_id, created_by) REFERENCES finance_group_members(group_id, user_id) ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_finance_scheduled_tasks_group_schedule ON finance_scheduled_tasks(group_id, schedule_at)`,
 ];
 
 export async function applyArchiveSchemaUpgrades(client: UpgradeClient): Promise<void> {
   for (const statement of ARCHIVE_SCHEMA_UPGRADES) {
     await client.query(statement);
   }
-  if (process.env.FINANCE_EXPERIMENTAL === 'true') {
-    for (const statement of FINANCE_SCHEMA_UPGRADES) {
-      await client.query(statement);
-    }
+  // These tables are additive and remain inaccessible while the finance API
+  // flag is off. Keeping them present lets archive export preserve finance data
+  // even if the feature flag is later disabled.
+  for (const statement of FINANCE_SCHEMA_UPGRADES) {
+    await client.query(statement);
   }
 }

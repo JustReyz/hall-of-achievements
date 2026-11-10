@@ -60,7 +60,7 @@
 .intro {
   display: flex;
   flex-wrap: wrap;
-  align-items: end;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 26px;
@@ -73,6 +73,16 @@
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr));
   gap: 18px;
   align-items: start;
+}
+.plannerGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 20px;
+  align-items: start;
+}
+.plannerGrid h3 {
+  margin: 0 0 10px;
+  font-size: 18px;
 }
 .panel {
   min-width: 0;
@@ -112,6 +122,7 @@
 }
 .form input,
 .form select,
+.form textarea,
 .select {
   width: 100%;
   min-height: 44px;
@@ -122,6 +133,10 @@
   color: #143d36;
   font: inherit;
   font-weight: 400;
+}
+.form textarea {
+  min-height: 96px;
+  resize: vertical;
 }
 .button {
   min-height: 44px;
@@ -138,8 +153,12 @@
 .button:hover:not(:disabled) {
   background: #0d2e29;
 }
+.button:active:not(:disabled),
+.buttonSecondary:active:not(:disabled) {
+  transform: translateY(1px);
+}
 .buttonSecondary {
-  min-height: 38px;
+  min-height: 44px;
   padding: 7px 12px;
   border: 1px solid #aebbb5;
   border-radius: 5px;
@@ -218,6 +237,22 @@
   gap: 6px;
   align-items: center;
 }
+.inlineField {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.inlineField select {
+  min-height: 44px;
+  max-width: 140px;
+  padding: 7px 9px;
+  border: 1px solid #7b8c83;
+  background: #fff;
+  color: #143d36;
+  font: inherit;
+}
 .amount {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -250,6 +285,13 @@
   align-items: center;
   cursor: pointer;
   font-weight: 600;
+}
+.page :where(a, button, input, select, textarea, summary):focus-visible {
+  outline: 3px solid #143d36;
+  outline-offset: 3px;
+}
+.page :where(a, summary, select) {
+  cursor: pointer;
 }
 .details summary::after {
   content: '+';

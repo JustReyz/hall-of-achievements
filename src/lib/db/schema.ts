@@ -145,6 +145,67 @@ export const financeTransactions = pgTable('finance_transactions', {
   check('finance_transactions_amount_check', sql`${table.amount} > 0 AND ${table.amount} <> 'NaN'::numeric`),
 ]);
 
+export const financeNotes = pgTable('finance_notes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  groupId: uuid('group_id').notNull().references(() => financeGroups.id, { onDelete: 'cascade' }),
+  createdBy: uuid('created_by').notNull().references(() => financeUsers.id),
+  title: varchar('title', { length: 200 }).notNull(),
+  content: text('content'),
+  targetAt: timestamp('target_at', { withTimezone: true, mode: 'date' }),
+  isPinned: boolean('is_pinned').notNull().default(false),
+  isCompleted: boolean('is_completed').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('idx_finance_notes_group_id').on(table.groupId, table.id),
+  index('idx_finance_notes_group_target').on(table.groupId, table.targetAt),
+]);
+
+export const financeNoteReminders = pgTable('finance_note_reminders', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  groupId: uuid('group_id').notNull(),
+  noteId: uuid('note_id').notNull(),
+  createdBy: uuid('created_by').notNull(),
+  reminderType: varchar('reminder_type', { length: 16 }).$type<'relative' | 'recurring'>().notNull().default('relative'),
+  leadMinutes: integer('lead_minutes'),
+  remindAt: timestamp('remind_at', { withTimezone: true, mode: 'date' }).notNull(),
+  recurrence: varchar('recurrence', { length: 16 }).$type<'none' | 'daily' | 'weekly' | 'monthly' | 'yearly'>().notNull().default('none'),
+  untilDate: date('until_date'),
+  message: text('message'),
+  status: varchar('status', { length: 16 }).$type<'pending' | 'sent' | 'cancelled'>().notNull().default('pending'),
+  deliveredCount: integer('delivered_count').notNull().default(0),
+  lastNotifiedAt: timestamp('last_notified_at', { withTimezone: true, mode: 'date' }),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, (table) => [
+  foreignKey({ columns: [table.groupId, table.noteId], foreignColumns: [financeNotes.groupId, financeNotes.id], name: 'finance_note_reminders_note_group_fk' }).onDelete('cascade'),
+  foreignKey({ columns: [table.groupId, table.createdBy], foreignColumns: [financeGroupMembers.groupId, financeGroupMembers.userId], name: 'finance_note_reminders_member_group_fk' }).onDelete('cascade'),
+  index('idx_finance_note_reminders_due').on(table.status, table.remindAt),
+  check('finance_note_reminders_type_check', sql`${table.reminderType} IN ('relative', 'recurring')`),
+  check('finance_note_reminders_recurrence_check', sql`${table.recurrence} IN ('none', 'daily', 'weekly', 'monthly', 'yearly')`),
+  check('finance_note_reminders_status_check', sql`${table.status} IN ('pending', 'sent', 'cancelled')`),
+  check('finance_note_reminders_delivered_count_check', sql`${table.deliveredCount} >= 0`),
+]);
+
+export const financeScheduledTasks = pgTable('finance_scheduled_tasks', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  groupId: uuid('group_id').notNull().references(() => financeGroups.id, { onDelete: 'cascade' }),
+  createdBy: uuid('created_by').notNull(),
+  title: varchar('title', { length: 200 }).notNull(),
+  details: text('details'),
+  scheduleAt: timestamp('schedule_at', { withTimezone: true, mode: 'date' }).notNull(),
+  recurrence: varchar('recurrence', { length: 16 }).$type<'once' | 'daily' | 'weekly' | 'monthly'>().notNull().default('once'),
+  isActive: boolean('is_active').notNull().default(true),
+  lastNotifiedAt: timestamp('last_notified_at', { withTimezone: true, mode: 'date' }),
+  completedAt: timestamp('completed_at', { withTimezone: true, mode: 'date' }),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, (table) => [
+  foreignKey({ columns: [table.groupId, table.createdBy], foreignColumns: [financeGroupMembers.groupId, financeGroupMembers.userId], name: 'finance_scheduled_tasks_member_group_fk' }).onDelete('cascade'),
+  index('idx_finance_scheduled_tasks_group_schedule').on(table.groupId, table.scheduleAt),
+  check('finance_scheduled_tasks_recurrence_check', sql`${table.recurrence} IN ('once', 'daily', 'weekly', 'monthly')`),
+]);
+
 /**
  * Singleton authentication state storing the active HMAC version and rotation audit metadata.
  */

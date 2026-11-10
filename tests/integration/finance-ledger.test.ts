@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PGlite } from '@electric-sql/pglite';
 import { createInMemoryDb, type AppDatabase } from '@/lib/db';
-import { authState, financeGroups, financeSessions, financeTransactions, financeUsers, financeWallets, sessions } from '@/lib/db/schema';
+import { authState, financeGroupMembers, financeGroups, financeSessions, financeTransactions, financeUsers, financeWallets, sessions } from '@/lib/db/schema';
 import { deriveAuthVersion } from '@/lib/auth/crypto';
 import { eq } from 'drizzle-orm';
 import type { FinanceSessionContext } from '@/lib/finance/auth';
-import { createGroup, createSource, createTransaction, createWallet, deleteTransaction, deleteWallet, getGroupBudget, getGroupSummary, listGroups, listTransactions, listWallets, setGroupBudget, updateTransaction, updateWallet } from '@/lib/finance/ledger';
+import { createGroup, createSource, createTransaction, createWallet, deleteGroup, deleteSource, deleteTransaction, deleteWallet, getGroupBudget, getGroupSummary, listGroups, listSources, listTransactions, listWallets, removeGroupMember, setGroupBudget, updateGroup, updateGroupMemberRole, updateSource, updateTransaction, updateWallet } from '@/lib/finance/ledger';
 
 describe('finance ledger', () => {
   let db: AppDatabase;
@@ -124,6 +124,51 @@ describe('finance ledger', () => {
     const emptyWallet = await createWallet(db, ownerContext, { groupId: group.id, name: 'Empty', type: 'regular' });
     await deleteWallet(db, ownerContext, emptyWallet.id);
     await expect(listWallets(db, owner, group.id)).resolves.toHaveLength(1);
+  });
+
+  it('allows members to record transactions but reserves wallet lifecycle changes for managers', async () => {
+    const group = await createGroup(db, ownerContext, { name: 'Shared' });
+    const wallet = await createWallet(db, ownerContext, { groupId: group.id, name: 'Household', type: 'regular' });
+    await db.insert(financeGroupMembers).values({ groupId: group.id, userId: outsider, role: 'member' });
+    const expiry = new Date(Date.now() + 60_000);
+    const financeTokenHash = 'c'.repeat(64);
+    await db.insert(financeSessions).values({ tokenHash: financeTokenHash, userId: outsider, hallSessionTokenHash: null, expiresAt: expiry, idleExpiresAt: expiry });
+    const memberContext = { userId: outsider, financeTokenHash, hallTokenHash: null };
+    await expect(createWallet(db, memberContext, { groupId: group.id, name: 'Member wallet', type: 'regular' })).rejects.toMatchObject({ status: 404 });
+    await expect(updateWallet(db, memberContext, wallet.id, { name: 'Changed' })).rejects.toMatchObject({ status: 404 });
+    await expect(deleteWallet(db, memberContext, wallet.id)).rejects.toMatchObject({ status: 404 });
+    await expect(createTransaction(db, memberContext, crypto.randomUUID(), { walletId: wallet.id, type: 'income', amount: '10' })).resolves.toMatchObject({ replayed: false });
+  });
+
+  it('enforces group administration and retains transaction history when sources are archived', async () => {
+    const group = await createGroup(db, ownerContext, { name: 'Original name' });
+    const updatedGroup = await updateGroup(db, ownerContext, group.id, { name: 'Renamed group' });
+    expect(updatedGroup.name).toBe('Renamed group');
+    await db.insert(financeGroupMembers).values({ groupId: group.id, userId: outsider, role: 'member' });
+    const expiry = new Date(Date.now() + 60_000);
+    const financeTokenHash = 'd'.repeat(64);
+    await db.insert(financeSessions).values({ tokenHash: financeTokenHash, userId: outsider, hallSessionTokenHash: null, expiresAt: expiry, idleExpiresAt: expiry });
+    const memberContext = { userId: outsider, financeTokenHash, hallTokenHash: null };
+    await expect(updateGroup(db, memberContext, group.id, { name: 'Unauthorized' })).rejects.toMatchObject({ status: 404 });
+    await expect(updateGroupMemberRole(db, memberContext, group.id, owner, 'admin')).rejects.toMatchObject({ status: 404 });
+    await updateGroupMemberRole(db, ownerContext, group.id, outsider, 'admin');
+    await expect(updateGroupMemberRole(db, memberContext, group.id, owner, 'member')).rejects.toMatchObject({ status: 404 });
+    await removeGroupMember(db, ownerContext, group.id, outsider);
+    await expect(listGroups(db, outsider)).resolves.toEqual([]);
+
+    const source = await createSource(db, ownerContext, { groupId: group.id, name: 'Cash', type: 'cash' });
+    expect(await updateSource(db, ownerContext, source.id, { name: 'Wallet cash', type: 'e-wallet' })).toMatchObject({ name: 'Wallet cash' });
+    const wallet = await createWallet(db, ownerContext, { groupId: group.id, name: 'Daily', type: 'regular' });
+    await createTransaction(db, ownerContext, crypto.randomUUID(), { walletId: wallet.id, sourceId: source.id, type: 'income', amount: '5' });
+    await deleteSource(db, ownerContext, source.id);
+    await expect(listSources(db, owner, group.id)).resolves.toEqual([]);
+    await expect(listTransactions(db, owner, wallet.id)).resolves.toMatchObject([{ sourceName: 'Wallet cash' }]);
+    await expect(createTransaction(db, ownerContext, crypto.randomUUID(), { walletId: wallet.id, sourceId: source.id, type: 'income', amount: '5' })).rejects.toMatchObject({ status: 404 });
+    await expect(deleteGroup(db, ownerContext, group.id)).rejects.toMatchObject({ status: 409 });
+
+    const emptyGroup = await createGroup(db, ownerContext, { name: 'Empty' });
+    await deleteGroup(db, ownerContext, emptyGroup.id);
+    await expect(listGroups(db, owner)).resolves.toHaveLength(1);
   });
 
   it.each(['finance logout', 'expired finance', 'forged user'] as const)(

@@ -1,15 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { resetDatabase, getDb } from '@/lib/db';
-import { achievements, assets, sessions, pushSubscriptions } from '@/lib/db/schema';
+import { achievements, assets, sessions, pushSubscriptions, financeUsers, financeGroups, financeGroupMembers, financeSources, financeBudgets, financeWallets, financeTransactions, financeSessions, financeInvitations, financeNotes, financeNoteReminders, financeScheduledTasks } from '@/lib/db/schema';
 import { getStorage } from '@/lib/storage';
 import { MemoryStorageAdapter } from '@/lib/storage/memory';
 import { exportArchive } from '@/lib/operations/export';
 import { restoreArchive, IntegrityError } from '@/lib/operations/restore';
+import { ARCHIVE_VERSION } from '@/lib/operations/export';
+import { hashFinancePassword } from '@/lib/finance/password';
 
 describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
   let tmpDirs: string[] = [];
@@ -21,6 +23,7 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
   }
 
   beforeEach(async () => {
+    vi.stubEnv('FINANCE_EXPERIMENTAL', 'true');
     await resetDatabase();
     const storage = getStorage();
     if (storage instanceof MemoryStorageAdapter) {
@@ -29,6 +32,7 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     for (const dir of tmpDirs) {
       try {
         if (fs.existsSync(dir)) {
@@ -39,6 +43,77 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
       }
     }
     tmpDirs = [];
+  });
+
+  it('round-trips finance records while revoking target sessions and invitations', async () => {
+    const db = await getDb();
+    const storage = getStorage() as MemoryStorageAdapter;
+    const userId = crypto.randomUUID();
+    const groupId = crypto.randomUUID();
+    const walletId = crypto.randomUUID();
+    const sourceId = crypto.randomUUID();
+    const transactionId = crypto.randomUUID();
+    const noteId = crypto.randomUUID();
+    const taskId = crypto.randomUUID();
+    const sessionTokenHash = crypto.randomBytes(32).toString('hex');
+    const invitationTokenHash = crypto.randomBytes(32).toString('hex');
+    const now = new Date();
+    await db.insert(financeUsers).values({ id: userId, username: 'archive-owner', passwordHash: await hashFinancePassword('a-strong-finance-password'), displayName: 'Archive Owner' });
+    await db.insert(financeGroups).values({ id: groupId, name: 'Archive household', createdBy: userId });
+    await db.insert(financeGroupMembers).values({ groupId, userId, role: 'owner' });
+    await db.insert(financeSources).values({ id: sourceId, groupId, name: 'Bank', type: 'bank', createdBy: userId });
+    await db.insert(financeBudgets).values({ groupId, monthlyLimit: '2500000.00', enabled: true });
+    await db.insert(financeWallets).values({ id: walletId, groupId, name: 'Emergency', type: 'goal', targetAmount: '5000000.00' });
+    await db.insert(financeTransactions).values({ id: transactionId, groupId, walletId, sourceId, type: 'income', amount: '1200.50', category: 'Salary', note: 'Monthly', transactionDate: '2026-11-10', createdBy: userId, idempotencyKey: crypto.randomUUID() });
+    await db.insert(financeNotes).values({ id: noteId, groupId, createdBy: userId, title: 'Review savings', content: 'Compare rate', targetAt: new Date('2026-11-21T09:00:00Z'), isPinned: true });
+    const reminderId = crypto.randomUUID();
+    await db.insert(financeNoteReminders).values({ id: reminderId, groupId, noteId, createdBy: userId, reminderType: 'recurring', remindAt: new Date('2026-11-20T09:00:00Z'), recurrence: 'weekly', untilDate: '2026-12-31', message: 'Review it' });
+    await db.insert(financeScheduledTasks).values({ id: taskId, groupId, createdBy: userId, title: 'Pay rent', scheduleAt: new Date('2026-11-25T02:00:00Z'), recurrence: 'monthly' });
+    await db.insert(financeSessions).values({ tokenHash: sessionTokenHash, userId, idleExpiresAt: new Date(now.getTime() + 60_000), expiresAt: new Date(now.getTime() + 60_000) });
+    await db.insert(financeInvitations).values({ tokenHash: invitationTokenHash, groupId, invitedBy: userId, expiresAt: new Date(now.getTime() + 60_000) });
+
+    const outputDir = createTmpDir('finance-roundtrip');
+    const archive = await exportArchive({ outputDir, db, storage });
+    expect(archive.manifest.version).toBe(ARCHIVE_VERSION);
+    expect(archive.manifest.files.some((entry) => entry.path === 'metadata/finance.json')).toBe(true);
+    const financeFile = fs.readFileSync(path.join(outputDir, 'metadata', 'finance.json'), 'utf8');
+    expect(financeFile).not.toContain(sessionTokenHash);
+    expect(financeFile).not.toContain(invitationTokenHash);
+
+    await db.insert(financeSessions).values({ tokenHash: crypto.randomBytes(32).toString('hex'), userId, idleExpiresAt: new Date(now.getTime() + 60_000), expiresAt: new Date(now.getTime() + 60_000) });
+    await restoreArchive({ inputDir: outputDir, db, storage });
+    expect((await db.select().from(financeUsers)).map(({ id, username }) => ({ id, username }))).toEqual([{ id: userId, username: 'archive-owner' }]);
+    expect((await db.select().from(financeGroups)).map(({ id, name }) => ({ id, name }))).toEqual([{ id: groupId, name: 'Archive household' }]);
+    expect((await db.select().from(financeWallets)).map(({ id, targetAmount }) => ({ id, targetAmount }))).toEqual([{ id: walletId, targetAmount: '5000000.00' }]);
+    expect((await db.select().from(financeTransactions)).map(({ id, amount }) => ({ id, amount }))).toEqual([{ id: transactionId, amount: '1200.50' }]);
+    expect((await db.select().from(financeNotes)).map(({ id, isPinned }) => ({ id, isPinned }))).toEqual([{ id: noteId, isPinned: true }]);
+    expect((await db.select().from(financeNoteReminders)).map(({ id, recurrence }) => ({ id, recurrence }))).toEqual([{ id: reminderId, recurrence: 'weekly' }]);
+    expect((await db.select().from(financeScheduledTasks)).map(({ id, recurrence }) => ({ id, recurrence }))).toEqual([{ id: taskId, recurrence: 'monthly' }]);
+    expect((await db.select().from(financeBudgets)).map(({ monthlyLimit }) => monthlyLimit)).toEqual(['2500000.00']);
+    expect((await db.select().from(financeSessions)).every((session) => session.revokedAt instanceof Date)).toBe(true);
+    expect((await db.select().from(financeInvitations)).every((invitation) => invitation.revokedAt instanceof Date)).toBe(true);
+  });
+
+  it('validates finance archive relationships before any database changes', async () => {
+    const db = await getDb();
+    const storage = getStorage() as MemoryStorageAdapter;
+    const outputDir = createTmpDir('finance-invalid');
+    await exportArchive({ outputDir, db, storage });
+    const financePath = path.join(outputDir, 'metadata', 'finance.json');
+    const financePayload = JSON.parse(fs.readFileSync(financePath, 'utf8')) as { wallets: unknown[] };
+    financePayload.wallets.push({ id: crypto.randomUUID(), groupId: crypto.randomUUID(), name: 'Orphan', type: 'regular', targetAmount: null, currency: 'IDR', defaultCategory: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    const financeBuffer = Buffer.from(JSON.stringify(financePayload));
+    fs.writeFileSync(financePath, financeBuffer);
+    const manifestPath = path.join(outputDir, 'manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { files: Array<{ path: string; size: number; sha256: string }> };
+    const financeEntry = manifest.files.find((entry) => entry.path === 'metadata/finance.json')!;
+    financeEntry.size = financeBuffer.length;
+    financeEntry.sha256 = crypto.createHash('sha256').update(financeBuffer).digest('hex');
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    await expect(restoreArchive({ inputDir: outputDir, db, storage })).rejects.toThrow(IntegrityError);
+    expect(await db.select().from(financeWallets)).toEqual([]);
+    expect(await db.select().from(achievements)).toEqual([]);
   });
 
   it('completes full export and restore round-trip with checksum verification', async () => {
@@ -148,8 +223,8 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
 
     expect(exportRes.achievementsCount).toBe(2);
     expect(exportRes.assetsCount).toBe(2);
-    expect(exportRes.filesCount).toBe(9); // 3 metadata + 6 binary assets
-    expect(exportRes.manifest.version).toBe(5);
+    expect(exportRes.filesCount).toBe(10); // 4 metadata + 6 binary assets
+    expect(exportRes.manifest.version).toBe(ARCHIVE_VERSION);
 
     // Verify disk structure
     const manifestPath = path.join(exportDir, 'manifest.json');
@@ -183,7 +258,7 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
       'A small sailboat beneath a starry blue sky.'
     );
     expect(restoreRes.assetsRestored).toBe(2);
-    expect(restoreRes.filesRestored).toBe(9);
+    expect(restoreRes.filesRestored).toBe(10);
 
     // 5. Verify restored DB records
     const restoredAchievements = await db.select().from(achievements);

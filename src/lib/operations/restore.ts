@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, isNull } from 'drizzle-orm';
 import { getDb, type AppDatabase } from '../db';
 import { getStorage } from '../storage';
 import { StorageAdapter } from '../storage/adapter';
@@ -12,12 +12,25 @@ import {
   collections,
   sessions,
   pushSubscriptions,
+  financeBudgets,
+  financeGroupMembers,
+  financeGroups,
+  financeInvitations,
+  financeNoteReminders,
+  financeNotes,
+  financeScheduledTasks,
+  financeSessions,
+  financeSources,
+  financeTransactions,
+  financeUsers,
+  financeWallets,
   type Achievement,
   type Asset,
 } from '../db/schema';
 import { MAX_COLLECTION_MEMBERS, MAX_COLLECTION_NAME_LENGTH } from '../validation/collection';
 import type { ExportManifest } from './export';
 import { isValidThumbnailPosition } from '../validation/achievement';
+import { financeArchiveSchema } from './finance-archive';
 
 export interface RestoreOptions {
   inputDir: string;
@@ -32,6 +45,7 @@ export interface RestoreResult {
   assetsRestored: number;
   filesRestored: number;
   totalSizeBytes: number;
+  financeRecordsRestored: number;
 }
 
 export class IntegrityError extends Error {
@@ -210,9 +224,9 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     );
   }
 
-  if (![1, 2, 3, 4, 5].includes(manifest.version)) {
+  if (![1, 2, 3, 4, 5, 6].includes(manifest.version)) {
     throw new IntegrityError(
-      `Unsupported manifest schema version: ${manifest.version}. Supported versions are 1, 2, 3, 4, and 5.`
+      `Unsupported manifest schema version: ${manifest.version}. Supported versions are 1, 2, 3, 4, 5, and 6.`
     );
   }
 
@@ -236,9 +250,10 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     const isAchievementsMeta = entry.path === 'metadata/achievements.json';
     const isAssetsMeta = entry.path === 'metadata/assets.json';
     const isCollectionsMeta = entry.path === 'metadata/collections.json';
+    const isFinanceMeta = entry.path === 'metadata/finance.json';
     const isAsset = entry.path.startsWith('assets/');
 
-    if (!isAchievementsMeta && !isAssetsMeta && !isCollectionsMeta && !isAsset) {
+    if (!isAchievementsMeta && !isAssetsMeta && !isCollectionsMeta && !isFinanceMeta && !isAsset) {
       throw new IntegrityError(
         `Path traversal attempt detected: unexpected file location '${entry.path}'. Only metadata/ and assets/ entries are permitted.`
       );
@@ -457,6 +472,18 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     });
   }
 
+  let financeArchive = financeArchiveSchema.parse({ users: [], groups: [], members: [], sources: [], budgets: [], wallets: [], transactions: [], notes: [], reminders: [], scheduledTasks: [] });
+  if (manifest.version >= 6) {
+    const financeBuf = fileBuffers.get('metadata/finance.json');
+    if (!financeBuf) throw new IntegrityError('Missing metadata/finance.json in a version 6 archive.');
+    try {
+      financeArchive = financeArchiveSchema.parse(JSON.parse(financeBuf.toString('utf-8')));
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new IntegrityError(`metadata/finance.json is invalid: ${detail}`);
+    }
+  }
+
   // 5. Atomic database transaction: ingest achievements, assets, and apply security invalidations atomically
   await db.transaction(async (tx) => {
     for (const a of rawAchievements) {
@@ -561,6 +588,62 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
       }
     }
 
+    for (const user of financeArchive.users) {
+      await tx.insert(financeUsers).values({ ...user, createdAt: new Date(user.createdAt), updatedAt: new Date(user.updatedAt) })
+        .onConflictDoUpdate({ target: financeUsers.id, set: { username: user.username, passwordHash: user.passwordHash, displayName: user.displayName, updatedAt: new Date(user.updatedAt) } });
+    }
+    for (const group of financeArchive.groups) {
+      await tx.insert(financeGroups).values({ ...group, createdAt: new Date(group.createdAt), updatedAt: new Date(group.updatedAt) })
+        .onConflictDoUpdate({ target: financeGroups.id, set: { name: group.name, createdBy: group.createdBy, updatedAt: new Date(group.updatedAt) } });
+    }
+    for (const member of financeArchive.members) {
+      await tx.insert(financeGroupMembers).values({ ...member, createdAt: new Date(member.createdAt) })
+        .onConflictDoUpdate({ target: [financeGroupMembers.groupId, financeGroupMembers.userId], set: { role: member.role } });
+    }
+    for (const source of financeArchive.sources) {
+      await tx.insert(financeSources).values({ ...source, deletedAt: source.deletedAt ? new Date(source.deletedAt) : null, createdAt: new Date(source.createdAt), updatedAt: new Date(source.updatedAt) })
+        .onConflictDoUpdate({ target: financeSources.id, set: { groupId: source.groupId, name: source.name, type: source.type, createdBy: source.createdBy, deletedAt: source.deletedAt ? new Date(source.deletedAt) : null, updatedAt: new Date(source.updatedAt) } });
+    }
+    for (const budget of financeArchive.budgets) {
+      await tx.insert(financeBudgets).values({ ...budget, createdAt: new Date(budget.createdAt), updatedAt: new Date(budget.updatedAt) })
+        .onConflictDoUpdate({ target: financeBudgets.groupId, set: { monthlyLimit: budget.monthlyLimit, currency: budget.currency, enabled: budget.enabled, updatedAt: new Date(budget.updatedAt) } });
+    }
+    for (const wallet of financeArchive.wallets) {
+      await tx.insert(financeWallets).values({ ...wallet, createdAt: new Date(wallet.createdAt), updatedAt: new Date(wallet.updatedAt) })
+        .onConflictDoUpdate({ target: financeWallets.id, set: { groupId: wallet.groupId, name: wallet.name, type: wallet.type, targetAmount: wallet.targetAmount, currency: wallet.currency, defaultCategory: wallet.defaultCategory, updatedAt: new Date(wallet.updatedAt) } });
+    }
+    for (const transaction of financeArchive.transactions) {
+      await tx.insert(financeTransactions).values({
+        ...transaction,
+        transactionDate: transaction.transactionDate,
+        deletedAt: transaction.deletedAt ? new Date(transaction.deletedAt) : null,
+        createdAt: new Date(transaction.createdAt),
+        updatedAt: new Date(transaction.updatedAt),
+      }).onConflictDoUpdate({ target: financeTransactions.id, set: {
+        groupId: transaction.groupId, walletId: transaction.walletId, sourceId: transaction.sourceId, type: transaction.type,
+        amount: transaction.amount, category: transaction.category, note: transaction.note, transactionDate: transaction.transactionDate,
+        createdBy: transaction.createdBy, updatedBy: transaction.updatedBy, idempotencyKey: transaction.idempotencyKey,
+        deletedAt: transaction.deletedAt ? new Date(transaction.deletedAt) : null, updatedAt: new Date(transaction.updatedAt),
+      } });
+    }
+    for (const note of financeArchive.notes) {
+      await tx.insert(financeNotes).values({ ...note, targetAt: note.targetAt ? new Date(note.targetAt) : null, createdAt: new Date(note.createdAt), updatedAt: new Date(note.updatedAt) })
+        .onConflictDoUpdate({ target: financeNotes.id, set: { groupId: note.groupId, createdBy: note.createdBy, title: note.title, content: note.content, targetAt: note.targetAt ? new Date(note.targetAt) : null, isPinned: note.isPinned, isCompleted: note.isCompleted, updatedAt: new Date(note.updatedAt) } });
+    }
+    for (const reminder of financeArchive.reminders) {
+      await tx.insert(financeNoteReminders).values({ ...reminder, remindAt: new Date(reminder.remindAt), lastNotifiedAt: reminder.lastNotifiedAt ? new Date(reminder.lastNotifiedAt) : null, createdAt: new Date(reminder.createdAt), updatedAt: new Date(reminder.updatedAt) })
+        .onConflictDoUpdate({ target: financeNoteReminders.id, set: { groupId: reminder.groupId, noteId: reminder.noteId, createdBy: reminder.createdBy, reminderType: reminder.reminderType, leadMinutes: reminder.leadMinutes, remindAt: new Date(reminder.remindAt), recurrence: reminder.recurrence, untilDate: reminder.untilDate, message: reminder.message, status: reminder.status, deliveredCount: reminder.deliveredCount, lastNotifiedAt: reminder.lastNotifiedAt ? new Date(reminder.lastNotifiedAt) : null, updatedAt: new Date(reminder.updatedAt) } });
+    }
+    for (const task of financeArchive.scheduledTasks) {
+      await tx.insert(financeScheduledTasks).values({ ...task, scheduleAt: new Date(task.scheduleAt), lastNotifiedAt: task.lastNotifiedAt ? new Date(task.lastNotifiedAt) : null, completedAt: task.completedAt ? new Date(task.completedAt) : null, createdAt: new Date(task.createdAt), updatedAt: new Date(task.updatedAt) })
+        .onConflictDoUpdate({ target: financeScheduledTasks.id, set: { groupId: task.groupId, createdBy: task.createdBy, title: task.title, details: task.details, scheduleAt: new Date(task.scheduleAt), recurrence: task.recurrence, isActive: task.isActive, lastNotifiedAt: task.lastNotifiedAt ? new Date(task.lastNotifiedAt) : null, completedAt: task.completedAt ? new Date(task.completedAt) : null, updatedAt: new Date(task.updatedAt) } });
+    }
+
+    // Sessions and unclaimed invite links belong to the target environment and
+    // must not survive a restore that replaces account or membership state.
+    await tx.update(financeSessions).set({ revokedAt: new Date() }).where(isNull(financeSessions.revokedAt));
+    await tx.update(financeInvitations).set({ revokedAt: new Date() }).where(isNull(financeInvitations.revokedAt));
+
     // Post-restore security guarantees: invalidate all target sessions and disable push subscriptions
     await tx.update(sessions).set({
       revoked: true,
@@ -602,5 +685,6 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
       binaryFilesRestored +
       manifest.files.filter((entry) => entry.path.startsWith('metadata/')).length,
     totalSizeBytes: manifest.metadata.totalSizeBytes,
+    financeRecordsRestored: Object.values(financeArchive).reduce((total, records) => total + records.length, 0),
   };
 }
