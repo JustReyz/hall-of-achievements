@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
         }
         const [sameName] = await tx.select({ id: financeUsers.id }).from(financeUsers).where(eq(financeUsers.username, name)).limit(1);
         if (sameName) throw new FinanceAuthError('Username is already in use.', 409);
-        const [created] = await tx.insert(financeUsers).values({ username: name, displayName: name, passwordHash }).returning({ id: financeUsers.id, username: financeUsers.username });
+        const [created] = await tx.insert(financeUsers).values({ username: name, displayName: name, passwordHash }).returning({ id: financeUsers.id, username: financeUsers.username, profilePicture: financeUsers.profilePicture });
         if (!created) throw new Error('Finance account creation failed.');
         if (invitationHash) {
           const [invitation] = await tx.select().from(financeInvitations).where(eq(financeInvitations.tokenHash, invitationHash));
@@ -100,7 +100,7 @@ export async function POST(request: NextRequest) {
       const [current] = await tx.select().from(financeUsers).where(eq(financeUsers.id, existingId!)).for('update');
       if (!current || current.passwordHash !== passwordHash) throw new FinanceAuthError('Invalid username or password.');
       await tx.insert(financeSessions).values({ tokenHash, userId: current.id, hallSessionTokenHash: null, expiresAt, idleExpiresAt: expiresAt });
-      return { id: current.id, username: current.username };
+      return { id: current.id, username: current.username, profilePicture: current.profilePicture };
     });
     if (!user) return jsonError('The first finance account already exists.', 409, 'REGISTRATION_CLOSED');
     await resetRateLimit(ip);

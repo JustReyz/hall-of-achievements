@@ -39,6 +39,10 @@ describe('finance API', () => {
     expect((await call(new Uint8Array(original))).status).toBe(200);
     const session = await getSession(new NextRequest('http://localhost:3000/api/finance/session', { headers: authHeaders }));
     expect((await session.json()).user.profilePicture).toMatch(/^data:image\/webp;base64,/);
+    const login = await register(new NextRequest('http://localhost:3000/api/finance/session', {
+      method: 'POST', headers: { origin: 'http://localhost:3000' }, body: JSON.stringify({ action: 'login', username: 'profile-owner', password: 'secure-password-for-test' }),
+    }));
+    expect((await login.json()).user.profilePicture).toMatch(/^data:image\/webp;base64,/);
     expect((await deleteProfile(new NextRequest('http://localhost:3000/api/finance/profile-picture', { method: 'DELETE', headers: authHeaders }))).status).toBe(200);
     const cleared = await getSession(new NextRequest('http://localhost:3000/api/finance/session', { headers: authHeaders }));
     expect((await cleared.json()).user.profilePicture).toBeNull();
