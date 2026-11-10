@@ -79,6 +79,7 @@ const FINANCE_SCHEMA_UPGRADES = [
       CHECK (username = lower(btrim(username)) AND length(username) > 0)
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_finance_users_username ON finance_users (username)`,
+  `ALTER TABLE finance_users ADD COLUMN IF NOT EXISTS profile_picture TEXT`,
   `CREATE TABLE IF NOT EXISTS finance_sessions (
     token_hash VARCHAR(64) PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES finance_users(id) ON DELETE CASCADE,

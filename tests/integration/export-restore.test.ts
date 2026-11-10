@@ -58,7 +58,7 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
     const sessionTokenHash = crypto.randomBytes(32).toString('hex');
     const invitationTokenHash = crypto.randomBytes(32).toString('hex');
     const now = new Date();
-    await db.insert(financeUsers).values({ id: userId, username: 'archive-owner', passwordHash: await hashFinancePassword('a-strong-finance-password'), displayName: 'Archive Owner' });
+    await db.insert(financeUsers).values({ id: userId, username: 'archive-owner', passwordHash: await hashFinancePassword('a-strong-finance-password'), displayName: 'Archive Owner', profilePicture: 'data:image/webp;base64,YQ==' });
     await db.insert(financeGroups).values({ id: groupId, name: 'Archive household', createdBy: userId });
     await db.insert(financeGroupMembers).values({ groupId, userId, role: 'owner' });
     await db.insert(financeSources).values({ id: sourceId, groupId, name: 'Bank', type: 'bank', createdBy: userId });
@@ -83,6 +83,7 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
     await db.insert(financeSessions).values({ tokenHash: crypto.randomBytes(32).toString('hex'), userId, idleExpiresAt: new Date(now.getTime() + 60_000), expiresAt: new Date(now.getTime() + 60_000) });
     await restoreArchive({ inputDir: outputDir, db, storage });
     expect((await db.select().from(financeUsers)).map(({ id, username }) => ({ id, username }))).toEqual([{ id: userId, username: 'archive-owner' }]);
+    expect((await db.select().from(financeUsers))[0]?.profilePicture).toBe('data:image/webp;base64,YQ==');
     expect((await db.select().from(financeGroups)).map(({ id, name }) => ({ id, name }))).toEqual([{ id: groupId, name: 'Archive household' }]);
     expect((await db.select().from(financeWallets)).map(({ id, targetAmount }) => ({ id, targetAmount }))).toEqual([{ id: walletId, targetAmount: '5000000.00' }]);
     expect((await db.select().from(financeTransactions)).map(({ id, amount }) => ({ id, amount }))).toEqual([{ id: transactionId, amount: '1200.50' }]);

@@ -11,6 +11,7 @@ const userSchema = z.object({
   username: z.string().regex(/^[a-z0-9_.-]{3,50}$/),
   passwordHash: z.string().regex(/^scrypt\$131072\$8\$1\$[0-9a-f]{32}\$[0-9a-f]{128}$/),
   displayName: z.string().min(1).max(120),
+  profilePicture: z.string().max(150000).regex(/^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/).nullable().optional(),
   createdAt: timestamp,
   updatedAt: timestamp,
 }).strict();

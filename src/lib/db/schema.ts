@@ -25,6 +25,7 @@ export const financeUsers = pgTable('finance_users', {
   username: varchar('username', { length: 100 }).notNull(),
   passwordHash: text('password_hash').notNull(),
   displayName: varchar('display_name', { length: 120 }).notNull(),
+  profilePicture: text('profile_picture'),
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (table) => [

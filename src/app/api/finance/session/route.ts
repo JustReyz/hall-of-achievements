@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
   try {
     const { userId } = await requireFinanceUser(request);
     const db = await getDb();
-    const [user] = await db.select({ id: financeUsers.id, username: financeUsers.username }).from(financeUsers).where(eq(financeUsers.id, userId)).limit(1);
+    const [user] = await db.select({ id: financeUsers.id, username: financeUsers.username, profilePicture: financeUsers.profilePicture }).from(financeUsers).where(eq(financeUsers.id, userId)).limit(1);
     if (!user) return jsonResponse({ authenticated: false });
     return jsonResponse({ authenticated: true, user });
   } catch (error) {

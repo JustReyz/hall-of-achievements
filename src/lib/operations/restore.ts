@@ -590,7 +590,7 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
 
     for (const user of financeArchive.users) {
       await tx.insert(financeUsers).values({ ...user, createdAt: new Date(user.createdAt), updatedAt: new Date(user.updatedAt) })
-        .onConflictDoUpdate({ target: financeUsers.id, set: { username: user.username, passwordHash: user.passwordHash, displayName: user.displayName, updatedAt: new Date(user.updatedAt) } });
+        .onConflictDoUpdate({ target: financeUsers.id, set: { username: user.username, passwordHash: user.passwordHash, displayName: user.displayName, profilePicture: user.profilePicture ?? null, updatedAt: new Date(user.updatedAt) } });
     }
     for (const group of financeArchive.groups) {
       await tx.insert(financeGroups).values({ ...group, createdAt: new Date(group.createdAt), updatedAt: new Date(group.updatedAt) })

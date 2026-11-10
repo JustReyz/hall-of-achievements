@@ -14,10 +14,35 @@ import { PUT as setBudget, GET as getBudget } from '@/app/api/finance/budgets/ro
 import { GET as getSummary } from '@/app/api/finance/summary/route';
 import { GET as exportFinance } from '@/app/api/finance/export/route';
 import { createAuthenticatedHeaders } from '../helpers/auth-helper';
+import sharp from 'sharp';
+import { PUT as uploadProfile, DELETE as deleteProfile } from '@/app/api/finance/profile-picture/route';
+import { GET as getSession } from '@/app/api/finance/session/route';
 
 describe('finance API', () => {
   beforeEach(async () => { vi.stubEnv('FINANCE_EXPERIMENTAL', 'true'); await resetDatabase(); });
   afterEach(() => vi.unstubAllEnvs());
+
+  it('validates and stores a private profile picture for the signed-in user', async () => {
+    const { headers } = await createAuthenticatedHeaders();
+    const registration = await register(new NextRequest('http://localhost:3000/api/finance/session', {
+      method: 'POST', headers, body: JSON.stringify({ action: 'register', username: 'profile-owner', password: 'secure-password-for-test' }),
+    }));
+    const token = registration.cookies.get(financeCookieName())?.value;
+    const authHeaders = { ...headers, cookie: `${headers.cookie}; ${financeCookieName()}=${token}` };
+    const call = (body: Uint8Array, requestHeaders = authHeaders) => uploadProfile(new NextRequest('http://localhost:3000/api/finance/profile-picture', {
+      method: 'PUT', headers: requestHeaders, body: body as BodyInit,
+    }));
+    expect((await call(new Uint8Array([1, 2, 3]))).status).toBe(400);
+    expect((await call(new Uint8Array(2 * 1024 * 1024 + 1))).status).toBe(413);
+    const original = await sharp({ create: { width: 12, height: 18, channels: 3, background: '#2a7755' } }).png().toBuffer();
+    expect((await call(new Uint8Array(original), { ...authHeaders, origin: 'https://evil.example' })).status).toBe(403);
+    expect((await call(new Uint8Array(original))).status).toBe(200);
+    const session = await getSession(new NextRequest('http://localhost:3000/api/finance/session', { headers: authHeaders }));
+    expect((await session.json()).user.profilePicture).toMatch(/^data:image\/webp;base64,/);
+    expect((await deleteProfile(new NextRequest('http://localhost:3000/api/finance/profile-picture', { method: 'DELETE', headers: authHeaders }))).status).toBe(200);
+    const cleared = await getSession(new NextRequest('http://localhost:3000/api/finance/session', { headers: authHeaders }));
+    expect((await cleared.json()).user.profilePicture).toBeNull();
+  });
 
   it('creates an authenticated group, wallet and idempotent transaction', async () => {
     const { headers } = await createAuthenticatedHeaders();

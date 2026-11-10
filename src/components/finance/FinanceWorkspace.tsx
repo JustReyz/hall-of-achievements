@@ -31,7 +31,7 @@ type Transaction = {
 type FinanceNote = { id: string; groupId: string; title: string; content: string | null; targetAt: string | null; isPinned: boolean; isCompleted: boolean };
 type FinanceReminder = { id: string; noteId: string; remindAt: string; recurrence: string; status: string; message: string | null };
 type FinanceScheduledTask = { id: string; title: string; details: string | null; scheduleAt: string; recurrence: string; isActive: boolean; completedAt: string | null };
-type Session = { authenticated: boolean; user?: { id: string; username: string } };
+type Session = { authenticated: boolean; user?: { id: string; username: string; profilePicture?: string | null } };
 type TransactionList = { transactions: Transaction[]; hasMore: boolean };
 type RecoveredTransaction = {
   id: string;
@@ -92,7 +92,7 @@ class RequestError extends Error {
 
 async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
-  if (init.body) headers.set('Content-Type', 'application/json');
+  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   if (init.method && init.method !== 'GET') headers.set('X-Requested-With', 'XMLHttpRequest');
   const response = await fetch(url, {
     ...init,
@@ -141,6 +141,7 @@ function formatAmount(value: string): string {
 
 export default function FinanceWorkspace() {
   const [session, setSession] = useState<Session | null>(null);
+  const [profileFile, setProfileFile] = useState<File | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
   const [register, setRegister] = useState(false);
   const [inviteToken, setInviteToken] = useState<string | null>(null);
@@ -562,6 +563,33 @@ export default function FinanceWorkspace() {
       setSources((current) => current.filter((item) => item.id !== source.id));
       if (sourceId === source.id) setSourceId('');
       setNotice('Sumber dinonaktifkan; riwayat transaksi tetap tersimpan.');
+    } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const saveProfilePicture = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!profileFile || busyRef.current) return;
+    const form = event.currentTarget;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try {
+      const result = await request<{ profilePicture: string }>(
+        '/api/finance/profile-picture',
+        { method: 'PUT', headers: { 'Content-Type': profileFile.type || 'application/octet-stream' }, body: profileFile },
+      );
+      setSession((current) => current?.user ? { ...current, user: { ...current.user, profilePicture: result.profilePicture } } : current);
+      setProfileFile(null); form.reset(); setNotice('Foto profil disimpan.');
+    } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const removeProfilePicture = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try {
+      await request('/api/finance/profile-picture', { method: 'DELETE' });
+      setSession((current) => current?.user ? { ...current, user: { ...current.user, profilePicture: null } } : current);
+      setNotice('Foto profil dihapus.');
     } catch (cause) { reportError(cause); }
     finally { busyRef.current = false; setBusy(false); }
   };
@@ -1165,6 +1193,16 @@ export default function FinanceWorkspace() {
           </section>
         ) : (
           <div className={styles.grid}>
+            <section className={styles.panel} aria-labelledby="profile-heading">
+              <h2 id="profile-heading" className={styles.sectionHeading}>Profil</h2>
+              <p>{session.user?.username}</p>
+              {session.user?.profilePicture && <img src={session.user.profilePicture} width={96} height={96} alt="Foto profil Anda" />}
+              <form className={styles.form} onSubmit={(event) => void saveProfilePicture(event)}>
+                <label>Foto profil (JPEG, PNG, atau WebP, maksimal 2 MB)<input type="file" accept="image/jpeg,image/png,image/webp" required disabled={busy} onChange={(event) => setProfileFile(event.target.files?.[0] ?? null)} /></label>
+                <button className={styles.button} disabled={busy || !profileFile}>Simpan foto</button>
+              </form>
+              {session.user?.profilePicture && <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void removeProfilePicture()}>Hapus foto</button>}
+            </section>
             <section className={styles.panel} aria-labelledby="groups-heading">
               <div className={styles.panelHeader}>
                 <h2 id="groups-heading" className={styles.sectionHeading}>
