@@ -9,7 +9,7 @@ import { getDb, resetDatabase } from '@/lib/db';
 import { achievements, assets } from '@/lib/db/schema';
 import { getStorage } from '@/lib/storage';
 import { MemoryStorageAdapter } from '@/lib/storage/memory';
-import { exportArchive } from '@/lib/operations/export';
+import { ARCHIVE_VERSION, exportArchive } from '@/lib/operations/export';
 import { restoreArchive } from '@/lib/operations/restore';
 import { GET as galleryHandler } from '@/app/api/achievements/route';
 import {
@@ -312,14 +312,14 @@ describe('Integration: thumbnail framing', () => {
     ).rejects.toThrow(/check constraint/);
   });
 
-  it('writes archive version 4 and preserves framing through export and restore', async () => {
+  it('writes the current archive version and preserves framing through export and restore', async () => {
     let db = await getDb();
     const storage = getStorage() as MemoryStorageAdapter;
     const seeded = await seedArtwork('Export framing', { x: 0.2, y: 0.8 });
 
     const exportDir = createTempDir();
     const exported = await exportArchive({ outputDir: exportDir, db, storage });
-    expect(exported.manifest.version).toBe(4);
+    expect(exported.manifest.version).toBe(ARCHIVE_VERSION);
 
     const metadata = JSON.parse(
       fs.readFileSync(path.join(exportDir, 'metadata', 'achievements.json'), 'utf-8')
@@ -404,7 +404,7 @@ describe('Integration: thumbnail framing', () => {
 
     const manifestPath = path.join(exportDir, 'manifest.json');
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { version: number };
-    manifest.version = 5;
+    manifest.version = ARCHIVE_VERSION + 1;
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
     db = await resetDatabase();
