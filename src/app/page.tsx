@@ -932,6 +932,7 @@ export default function HomePage() {
             <p>Private art archive</p>
           </div>
           <nav aria-label="Archive actions" className="gallery-header-actions">
+            <a className="gallery-button gallery-button-quiet" href="/finance">Finance</a>
             <button
               type="button"
               className="gallery-button gallery-button-primary"

@@ -33,3 +33,9 @@
 ## Verification
 
 Use isolated PGlite and a disposable PostgreSQL database for migrations and financial concurrency; never run the source `DROP`/`TRUNCATE` script. Verify authorization across members and groups, old and new backup round trips, existing Hall tests, and real browser behavior at desktop and mobile sizes. Record any integration that cannot be verified without external bot or storage access.
+
+## Work in progress
+
+The current draft adds additive finance tables behind `FINANCE_EXPERIMENTAL=true`, an independent finance account/session flow, groups with one-time invitation links, wallets, exact-amount income/expense records with idempotent writes, edits and soft deletes, sources, monthly budgets, summaries and CSV export. The `/finance` UI covers account onboarding, group/member access, wallet controls, transaction entry/edit/delete, sources, budget and summary. Local pending-transaction recovery uses a server lookup by idempotency key. Archive tables and existing data remain separate; do not enable the flag against a live database.
+
+Parity remains incomplete: planner notes/reminders/tasks, scheduled notification delivery, bot integration, profile pictures, group/member administration, import, finance backup/restore and source management are not yet implemented. Most importantly, Hall archive export/restore does not include finance data. The UI has not received visual or keyboard review in a real browser, and finance concurrency has only been exercised with PGlite, not PostgreSQL. Keep this PR in draft until backup/restore compatibility, these feature gaps, and deployment-specific security review are addressed.
