@@ -14,7 +14,8 @@
     "db:migrate": "tsx src/lib/db/migrate.ts",
     "export": "tsx scripts/export.ts",
     "restore": "tsx scripts/restore.ts",
-    "finance:preflight": "tsx scripts/savers-preflight.ts"
+    "finance:preflight": "tsx scripts/savers-preflight.ts",
+    "finance:import": "tsx scripts/savers-import.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.11",

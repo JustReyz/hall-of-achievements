@@ -5,12 +5,13 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { resetDatabase, getDb } from '@/lib/db';
-import { achievements, assets, sessions, pushSubscriptions, financeUsers, financeGroups, financeGroupMembers, financeSources, financeBudgets, financeWallets, financeTransactions, financeSessions, financeInvitations, financeNotes, financeNoteReminders, financeScheduledTasks } from '@/lib/db/schema';
+import { achievements, assets, sessions, pushSubscriptions, financeUsers, financeGroups, financeGroupMembers, financeImportRecords, financeSources, financeBudgets, financeWallets, financeTransactions, financeSessions, financeInvitations, financeNotes, financeNoteReminders, financeScheduledTasks } from '@/lib/db/schema';
 import { getStorage } from '@/lib/storage';
 import { MemoryStorageAdapter } from '@/lib/storage/memory';
 import { exportArchive } from '@/lib/operations/export';
 import { restoreArchive, IntegrityError } from '@/lib/operations/restore';
 import { ARCHIVE_VERSION } from '@/lib/operations/export';
+import { saversImportId } from '@/lib/finance/savers-id';
 import { hashFinancePassword } from '@/lib/finance/password';
 
 describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
@@ -69,6 +70,8 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
     const reminderId = crypto.randomUUID();
     await db.insert(financeNoteReminders).values({ id: reminderId, groupId, noteId, createdBy: userId, reminderType: 'recurring', remindAt: new Date('2026-11-20T09:00:00Z'), recurrence: 'weekly', untilDate: '2026-12-31', message: 'Review it' });
     await db.insert(financeScheduledTasks).values({ id: taskId, groupId, createdBy: userId, title: 'Pay rent', scheduleAt: new Date('2026-11-25T02:00:00Z'), recurrence: 'monthly' });
+    const legacyWalletId = crypto.randomUUID();
+    await db.insert(financeImportRecords).values({ kind: 'wallet', legacyId: legacyWalletId, targetId: saversImportId('wallet', legacyWalletId), groupId });
     await db.insert(financeSessions).values({ tokenHash: sessionTokenHash, userId, idleExpiresAt: new Date(now.getTime() + 60_000), expiresAt: new Date(now.getTime() + 60_000) });
     await db.insert(financeInvitations).values({ tokenHash: invitationTokenHash, groupId, invitedBy: userId, expiresAt: new Date(now.getTime() + 60_000) });
 
@@ -81,9 +84,11 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
     expect(financeFile).not.toContain(invitationTokenHash);
 
     await db.insert(financeSessions).values({ tokenHash: crypto.randomBytes(32).toString('hex'), userId, idleExpiresAt: new Date(now.getTime() + 60_000), expiresAt: new Date(now.getTime() + 60_000) });
+    await db.delete(financeImportRecords);
     await restoreArchive({ inputDir: outputDir, db, storage });
     expect((await db.select().from(financeUsers)).map(({ id, username }) => ({ id, username }))).toEqual([{ id: userId, username: 'archive-owner' }]);
     expect((await db.select().from(financeUsers))[0]?.profilePicture).toBe('data:image/webp;base64,YQ==');
+    expect((await db.select().from(financeImportRecords))[0]).toMatchObject({ kind: 'wallet', targetId: saversImportId('wallet', legacyWalletId), groupId });
     expect((await db.select().from(financeGroups)).map(({ id, name }) => ({ id, name }))).toEqual([{ id: groupId, name: 'Archive household' }]);
     expect((await db.select().from(financeWallets)).map(({ id, targetAmount }) => ({ id, targetAmount }))).toEqual([{ id: walletId, targetAmount: '5000000.00' }]);
     expect((await db.select().from(financeTransactions)).map(({ id, amount }) => ({ id, amount }))).toEqual([{ id: transactionId, amount: '1200.50' }]);
@@ -93,6 +98,29 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
     expect((await db.select().from(financeBudgets)).map(({ monthlyLimit }) => monthlyLimit)).toEqual(['2500000.00']);
     expect((await db.select().from(financeSessions)).every((session) => session.revokedAt instanceof Date)).toBe(true);
     expect((await db.select().from(financeInvitations)).every((invitation) => invitation.revokedAt instanceof Date)).toBe(true);
+  });
+
+  it('restores version 6 archives without import records and rejects incomplete version 7 archives', async () => {
+    const db = await getDb();
+    const storage = getStorage() as MemoryStorageAdapter;
+    const outputDir = createTmpDir('finance-v6-compatibility');
+    await exportArchive({ outputDir, db, storage });
+    const financePath = path.join(outputDir, 'metadata', 'finance.json');
+    const payload = JSON.parse(fs.readFileSync(financePath, 'utf8')) as Record<string, unknown>;
+    delete payload.importRecords;
+    const buffer = Buffer.from(JSON.stringify(payload));
+    fs.writeFileSync(financePath, buffer);
+    const manifestPath = path.join(outputDir, 'manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { version: number; files: Array<{ path: string; size: number; sha256: string }> };
+    const entry = manifest.files.find((item) => item.path === 'metadata/finance.json')!;
+    entry.size = buffer.length;
+    entry.sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+    manifest.version = 6;
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+    await expect(restoreArchive({ inputDir: outputDir, db, storage })).resolves.toBeDefined();
+    manifest.version = 7;
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+    await expect(restoreArchive({ inputDir: outputDir, db, storage })).rejects.toThrow('Missing importRecords');
   });
 
   it('validates finance archive relationships before any database changes', async () => {

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { validateCalendarDate } from '../validation/achievement';
+import { saversImportId } from '../finance/savers-id';
 
 const id = z.string().uuid();
 const timestamp = z.string().datetime({ offset: true });
@@ -52,6 +53,7 @@ export const financeArchiveSchema = z.object({
   notes: z.array(noteSchema),
   reminders: z.array(reminderSchema),
   scheduledTasks: z.array(scheduledTaskSchema),
+  importRecords: z.array(z.object({ kind: z.enum(['wallet', 'transaction', 'note', 'reminder', 'task']), legacyId: id, targetId: id, groupId: id, createdAt: timestamp }).strict()).default([]),
 }).strict().superRefine((archive, context) => {
   const unique = (values: string[], path: string) => {
     if (new Set(values).size !== values.length) context.addIssue({ code: 'custom', path: [path], message: 'duplicate identifiers' });
@@ -65,6 +67,9 @@ export const financeArchiveSchema = z.object({
   unique(archive.notes.map((row) => row.id), 'notes');
   unique(archive.reminders.map((row) => row.id), 'reminders');
   unique(archive.scheduledTasks.map((row) => row.id), 'scheduledTasks');
+  unique(archive.importRecords.map((row) => `${row.kind}:${row.legacyId}`), 'importRecords');
+  unique(archive.importRecords.map((row) => `${row.kind}:${row.targetId}`), 'importRecords');
+  for (const row of archive.importRecords) if (row.targetId !== saversImportId(row.kind, row.legacyId)) context.addIssue({ code: 'custom', path: ['importRecords'], message: 'import record target does not match its legacy identifier' });
   const users = new Set(archive.users.map((row) => row.id));
   const groups = new Set(archive.groups.map((row) => row.id));
   const members = new Set(archive.members.map((row) => `${row.groupId}:${row.userId}`));

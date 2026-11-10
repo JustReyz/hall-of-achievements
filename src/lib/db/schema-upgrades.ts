@@ -241,6 +241,15 @@ const FINANCE_SCHEMA_UPGRADES = [
     CONSTRAINT finance_scheduled_tasks_member_group_fk FOREIGN KEY (group_id, created_by) REFERENCES finance_group_members(group_id, user_id) ON DELETE CASCADE
   )`,
   `CREATE INDEX IF NOT EXISTS idx_finance_scheduled_tasks_group_schedule ON finance_scheduled_tasks(group_id, schedule_at)`,
+  `CREATE TABLE IF NOT EXISTS finance_import_records (
+    kind VARCHAR(16) NOT NULL CHECK (kind IN ('wallet', 'transaction', 'note', 'reminder', 'task')),
+    legacy_id UUID NOT NULL,
+    target_id UUID NOT NULL,
+    group_id UUID NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (kind, legacy_id)
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_finance_import_records_target ON finance_import_records (kind, target_id)`,
 ];
 
 export async function applyArchiveSchemaUpgrades(client: UpgradeClient): Promise<void> {

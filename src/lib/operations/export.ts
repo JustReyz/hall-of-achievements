@@ -5,7 +5,7 @@ import { eq, inArray, asc } from 'drizzle-orm';
 import { getDb, type AppDatabase } from '../db';
 import { getStorage } from '../storage';
 import { StorageAdapter } from '../storage/adapter';
-import { achievements, assets, collectionItems, collections, financeBudgets, financeGroupMembers, financeGroups, financeNoteReminders, financeNotes, financeScheduledTasks, financeSources, financeTransactions, financeUsers, financeWallets, type Asset } from '../db/schema';
+import { achievements, assets, collectionItems, collections, financeBudgets, financeGroupMembers, financeGroups, financeImportRecords, financeNoteReminders, financeNotes, financeScheduledTasks, financeSources, financeTransactions, financeUsers, financeWallets, type Asset } from '../db/schema';
 
 export interface ManifestFileEntry {
   path: string;
@@ -13,7 +13,7 @@ export interface ManifestFileEntry {
   sha256: string;
 }
 
-export const ARCHIVE_VERSION = 6;
+export const ARCHIVE_VERSION = 7;
 
 export interface ExportManifest {
   version: number;
@@ -222,6 +222,7 @@ export async function exportArchive(options: ExportOptions = {}): Promise<Export
     notes: await db.select().from(financeNotes).orderBy(asc(financeNotes.createdAt)),
     reminders: await db.select().from(financeNoteReminders).orderBy(asc(financeNoteReminders.createdAt)),
     scheduledTasks: await db.select().from(financeScheduledTasks).orderBy(asc(financeScheduledTasks.createdAt)),
+    importRecords: await db.select().from(financeImportRecords).orderBy(asc(financeImportRecords.kind), asc(financeImportRecords.legacyId)),
   };
   const financeJson = JSON.stringify(financePayload, null, indent);
   const financeBuf = Buffer.from(financeJson, 'utf-8');

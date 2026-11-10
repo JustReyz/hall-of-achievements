@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { getDb, type AppDatabase } from '../db';
 import { getStorage } from '../storage';
 import { StorageAdapter } from '../storage/adapter';
@@ -15,6 +15,7 @@ import {
   financeBudgets,
   financeGroupMembers,
   financeGroups,
+  financeImportRecords,
   financeInvitations,
   financeNoteReminders,
   financeNotes,
@@ -224,9 +225,9 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     );
   }
 
-  if (![1, 2, 3, 4, 5, 6].includes(manifest.version)) {
+  if (![1, 2, 3, 4, 5, 6, 7].includes(manifest.version)) {
     throw new IntegrityError(
-      `Unsupported manifest schema version: ${manifest.version}. Supported versions are 1, 2, 3, 4, 5, and 6.`
+      `Unsupported manifest schema version: ${manifest.version}. Supported versions are 1 through 7.`
     );
   }
 
@@ -477,7 +478,9 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     const financeBuf = fileBuffers.get('metadata/finance.json');
     if (!financeBuf) throw new IntegrityError('Missing metadata/finance.json in a version 6 archive.');
     try {
-      financeArchive = financeArchiveSchema.parse(JSON.parse(financeBuf.toString('utf-8')));
+      const rawFinance: unknown = JSON.parse(financeBuf.toString('utf-8'));
+      if (manifest.version >= 7 && (!rawFinance || typeof rawFinance !== 'object' || !('importRecords' in rawFinance) || !Array.isArray(rawFinance.importRecords))) throw new Error('Missing importRecords in version 7 archive.');
+      financeArchive = financeArchiveSchema.parse(rawFinance);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       throw new IntegrityError(`metadata/finance.json is invalid: ${detail}`);
@@ -637,6 +640,11 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     for (const task of financeArchive.scheduledTasks) {
       await tx.insert(financeScheduledTasks).values({ ...task, scheduleAt: new Date(task.scheduleAt), lastNotifiedAt: task.lastNotifiedAt ? new Date(task.lastNotifiedAt) : null, completedAt: task.completedAt ? new Date(task.completedAt) : null, createdAt: new Date(task.createdAt), updatedAt: new Date(task.updatedAt) })
         .onConflictDoUpdate({ target: financeScheduledTasks.id, set: { groupId: task.groupId, createdBy: task.createdBy, title: task.title, details: task.details, scheduleAt: new Date(task.scheduleAt), recurrence: task.recurrence, isActive: task.isActive, lastNotifiedAt: task.lastNotifiedAt ? new Date(task.lastNotifiedAt) : null, completedAt: task.completedAt ? new Date(task.completedAt) : null, updatedAt: new Date(task.updatedAt) } });
+    }
+    for (const record of financeArchive.importRecords) {
+      await tx.insert(financeImportRecords).values({ ...record, createdAt: new Date(record.createdAt) }).onConflictDoNothing();
+      const [existing] = await tx.select().from(financeImportRecords).where(and(eq(financeImportRecords.kind, record.kind), eq(financeImportRecords.legacyId, record.legacyId)));
+      if (!existing || existing.targetId !== record.targetId || existing.groupId !== record.groupId) throw new IntegrityError('Finance import record conflicts with the target database.');
     }
 
     // Sessions and unclaimed invite links belong to the target environment and

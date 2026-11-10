@@ -13,7 +13,7 @@ describe('finance schema migrations', () => {
       await initTables(pg);
       const result = await pg.query<{ table_name: string }>(`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'finance_%'`);
       expect(result.rows.map((row) => row.table_name).sort()).toEqual([
-        'finance_budgets', 'finance_group_members', 'finance_groups', 'finance_invitations', 'finance_note_reminders', 'finance_notes',
+        'finance_budgets', 'finance_group_members', 'finance_groups', 'finance_import_records', 'finance_invitations', 'finance_note_reminders', 'finance_notes',
         'finance_scheduled_tasks', 'finance_sessions', 'finance_sources', 'finance_transactions', 'finance_users', 'finance_wallets',
       ]);
     } finally { await pg.close(); }
@@ -29,7 +29,7 @@ describe('finance schema migrations', () => {
       expect(existing.rows[0]?.title).toBe('Existing archive');
       const tables = await pg.query<{ table_name: string }>(`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'finance_%'`);
       expect(tables.rows.map((row) => row.table_name).sort()).toEqual([
-        'finance_budgets', 'finance_group_members', 'finance_groups', 'finance_invitations', 'finance_note_reminders', 'finance_notes',
+        'finance_budgets', 'finance_group_members', 'finance_groups', 'finance_import_records', 'finance_invitations', 'finance_note_reminders', 'finance_notes',
         'finance_scheduled_tasks', 'finance_sessions', 'finance_sources', 'finance_transactions', 'finance_users', 'finance_wallets',
       ]);
     } finally {

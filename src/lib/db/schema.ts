@@ -220,6 +220,18 @@ export const authState = pgTable('auth_state', {
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 });
 
+export const financeImportRecords = pgTable('finance_import_records', {
+  kind: varchar('kind', { length: 16 }).$type<'wallet' | 'transaction' | 'note' | 'reminder' | 'task'>().notNull(),
+  legacyId: uuid('legacy_id').notNull(),
+  targetId: uuid('target_id').notNull(),
+  groupId: uuid('group_id').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, (table) => [
+  primaryKey({ columns: [table.kind, table.legacyId] }),
+  uniqueIndex('idx_finance_import_records_target').on(table.kind, table.targetId),
+  check('finance_import_records_kind_check', sql`${table.kind} IN ('wallet', 'transaction', 'note', 'reminder', 'task')`),
+]);
+
 /**
  * Active and revoked device sessions. Raw tokens are never stored; only SHA-256 hashes.
  */
