@@ -9,7 +9,7 @@ import { uploadIntents, achievements, assets } from '@/lib/db/schema';
 import { getStorage } from '@/lib/storage';
 import { MemoryStorageAdapter } from '@/lib/storage/memory';
 import { getStorageQuotaStats } from '@/lib/storage/quota';
-import { exportArchive } from '@/lib/operations/export';
+import { ARCHIVE_VERSION, exportArchive } from '@/lib/operations/export';
 import { restoreArchive } from '@/lib/operations/restore';
 import { listTrash } from '@/lib/operations/trash';
 import { POST as createAchievementHandler, GET as galleryHandler } from '@/app/api/achievements/route';
@@ -223,7 +223,7 @@ describe('Integration: recoverable Trash', () => {
 
     const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trash-roundtrip-'));
     const exported = await exportArchive({ outputDir, force: true });
-    expect(exported.manifest.version).toBe(4);
+    expect(exported.manifest.version).toBe(ARCHIVE_VERSION);
 
     await resetDatabase();
     (getStorage() as MemoryStorageAdapter).clear();

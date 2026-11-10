@@ -8,7 +8,7 @@ import { resetDatabase, getDb } from '@/lib/db';
 import { uploadIntents, achievements, collectionItems, collections } from '@/lib/db/schema';
 import { getStorage } from '@/lib/storage';
 import { MemoryStorageAdapter } from '@/lib/storage/memory';
-import { exportArchive } from '@/lib/operations/export';
+import { ARCHIVE_VERSION, exportArchive } from '@/lib/operations/export';
 import { restoreArchive } from '@/lib/operations/restore';
 import { POST as createAchievementHandler } from '@/app/api/achievements/route';
 import {
@@ -404,7 +404,7 @@ describe('Integration: ordered collections', () => {
     expect(payload.tags).toEqual(['inside-tag']);
   });
 
-  it('round-trips collections, order, and trashed members through archive version 4', async () => {
+  it('round-trips collections, order, and trashed members through the current archive version', async () => {
     const { headers } = await createAuthenticatedHeaders();
     const first = await createArtwork(headers, 'Archive One');
     const second = await createArtwork(headers, 'Archive Two');
@@ -418,7 +418,7 @@ describe('Integration: ordered collections', () => {
 
     const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'collections-roundtrip-'));
     const exported = await exportArchive({ outputDir, force: true });
-    expect(exported.manifest.version).toBe(4);
+    expect(exported.manifest.version).toBe(ARCHIVE_VERSION);
     expect(
       exported.manifest.files.some((entry) => entry.path === 'metadata/collections.json')
     ).toBe(true);

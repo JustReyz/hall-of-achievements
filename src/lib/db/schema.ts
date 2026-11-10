@@ -15,7 +15,197 @@ import {
   check,
   primaryKey,
   uniqueIndex,
+  numeric,
+  foreignKey,
 } from 'drizzle-orm/pg-core';
+
+/** Separate identities for the finance area; Hall archive sessions remain unchanged. */
+export const financeUsers = pgTable('finance_users', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  username: varchar('username', { length: 100 }).notNull(),
+  passwordHash: text('password_hash').notNull(),
+  displayName: varchar('display_name', { length: 120 }).notNull(),
+  profilePicture: text('profile_picture'),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('idx_finance_users_username').on(table.username),
+  check('finance_users_username_normalized_check', sql`${table.username} = lower(btrim(${table.username})) AND length(${table.username}) > 0`),
+]);
+
+export const financeSessions = pgTable('finance_sessions', {
+  tokenHash: varchar('token_hash', { length: 64 }).primaryKey(),
+  userId: uuid('user_id').notNull().references(() => financeUsers.id, { onDelete: 'cascade' }),
+  hallSessionTokenHash: text('hall_session_token_hash').references(() => sessions.tokenHash, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  lastAccessedAt: timestamp('last_accessed_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  idleExpiresAt: timestamp('idle_expires_at', { withTimezone: true, mode: 'date' }).notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true, mode: 'date' }),
+}, (table) => [index('idx_finance_sessions_user').on(table.userId)]);
+
+export const financeGroups = pgTable('finance_groups', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 120 }).notNull(),
+  createdBy: uuid('created_by').notNull().references(() => financeUsers.id),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+});
+
+export const financeGroupMembers = pgTable('finance_group_members', {
+  groupId: uuid('group_id').notNull().references(() => financeGroups.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => financeUsers.id, { onDelete: 'cascade' }),
+  role: varchar('role', { length: 16 }).$type<'owner' | 'admin' | 'member'>().notNull().default('member'),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, (table) => [
+  primaryKey({ columns: [table.groupId, table.userId] }),
+  index('idx_finance_group_members_user').on(table.userId),
+  check('finance_group_members_role_check', sql`${table.role} IN ('owner', 'admin', 'member')`),
+]);
+
+export const financeInvitations = pgTable('finance_invitations', {
+  tokenHash: varchar('token_hash', { length: 64 }).primaryKey(),
+  groupId: uuid('group_id').notNull().references(() => financeGroups.id, { onDelete: 'cascade' }),
+  invitedBy: uuid('invited_by').notNull().references(() => financeUsers.id),
+  role: varchar('role', { length: 16 }).$type<'admin' | 'member'>().notNull().default('member'),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
+  claimedAt: timestamp('claimed_at', { withTimezone: true, mode: 'date' }),
+  revokedAt: timestamp('revoked_at', { withTimezone: true, mode: 'date' }),
+}, (table) => [
+  index('idx_finance_invitations_group').on(table.groupId, table.expiresAt),
+  check('finance_invitations_role_check', sql`${table.role} IN ('admin', 'member')`),
+]);
+
+export const financeSources = pgTable('finance_sources', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  groupId: uuid('group_id').notNull().references(() => financeGroups.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 100 }).notNull(),
+  type: varchar('type', { length: 16 }).$type<'cash' | 'e-wallet' | 'bank' | 'other'>().notNull().default('other'),
+  createdBy: uuid('created_by').notNull().references(() => financeUsers.id),
+  deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'date' }),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('idx_finance_sources_group_id').on(table.groupId, table.id),
+  uniqueIndex('idx_finance_sources_group_name').on(table.groupId, table.name),
+  check('finance_sources_type_check', sql`${table.type} IN ('cash', 'e-wallet', 'bank', 'other')`),
+]);
+
+export const financeBudgets = pgTable('finance_budgets', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  groupId: uuid('group_id').notNull().unique().references(() => financeGroups.id, { onDelete: 'cascade' }),
+  monthlyLimit: numeric('monthly_limit', { precision: 18, scale: 2 }),
+  currency: varchar('currency', { length: 3 }).notNull().default('IDR'),
+  enabled: boolean('enabled').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, (table) => [
+  check('finance_budgets_limit_check', sql`${table.monthlyLimit} IS NULL OR (${table.monthlyLimit} >= 0 AND ${table.monthlyLimit} <> 'NaN'::numeric)`),
+  check('finance_budgets_currency_check', sql`${table.currency} ~ '^[A-Z]{3}$'`),
+]);
+
+export const financeWallets = pgTable('finance_wallets', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  groupId: uuid('group_id').notNull().references(() => financeGroups.id, { onDelete: 'restrict' }),
+  name: varchar('name', { length: 120 }).notNull(),
+  type: varchar('type', { length: 16 }).$type<'regular' | 'goal'>().notNull(),
+  targetAmount: numeric('target_amount', { precision: 18, scale: 2 }),
+  currency: varchar('currency', { length: 3 }).notNull().default('IDR'),
+  defaultCategory: varchar('default_category', { length: 100 }),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('idx_finance_wallets_group_id').on(table.groupId, table.id),
+  check('finance_wallets_type_target_check', sql`(${table.type} = 'regular' AND ${table.targetAmount} IS NULL) OR (${table.type} = 'goal' AND ${table.targetAmount} IS NOT NULL AND ${table.targetAmount} >= 0 AND ${table.targetAmount} <> 'NaN'::numeric)`),
+  check('finance_wallets_currency_check', sql`${table.currency} ~ '^[A-Z]{3}$'`),
+]);
+
+export const financeTransactions = pgTable('finance_transactions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  groupId: uuid('group_id').notNull(),
+  walletId: uuid('wallet_id').notNull(),
+  sourceId: uuid('source_id'),
+  type: varchar('type', { length: 16 }).$type<'income' | 'expense'>().notNull(),
+  amount: numeric('amount', { precision: 18, scale: 2 }).notNull(),
+  category: varchar('category', { length: 100 }),
+  note: text('note'),
+  transactionDate: date('transaction_date').notNull(),
+  createdBy: uuid('created_by').notNull().references(() => financeUsers.id),
+  updatedBy: uuid('updated_by').references(() => financeUsers.id),
+  idempotencyKey: uuid('idempotency_key'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'date' }),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, (table) => [
+  foreignKey({ columns: [table.groupId, table.walletId], foreignColumns: [financeWallets.groupId, financeWallets.id], name: 'finance_transactions_wallet_group_fk' }).onDelete('restrict'),
+  foreignKey({ columns: [table.groupId, table.sourceId], foreignColumns: [financeSources.groupId, financeSources.id], name: 'finance_transactions_source_group_fk' }).onDelete('restrict'),
+  uniqueIndex('idx_finance_transactions_creator_idempotency').on(table.createdBy, table.idempotencyKey),
+  index('idx_finance_transactions_wallet_date').on(table.walletId, table.transactionDate, table.id),
+  check('finance_transactions_type_check', sql`${table.type} IN ('income', 'expense')`),
+  check('finance_transactions_amount_check', sql`${table.amount} > 0 AND ${table.amount} <> 'NaN'::numeric`),
+]);
+
+export const financeNotes = pgTable('finance_notes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  groupId: uuid('group_id').notNull().references(() => financeGroups.id, { onDelete: 'cascade' }),
+  createdBy: uuid('created_by').notNull().references(() => financeUsers.id),
+  title: varchar('title', { length: 200 }).notNull(),
+  content: text('content'),
+  targetAt: timestamp('target_at', { withTimezone: true, mode: 'date' }),
+  isPinned: boolean('is_pinned').notNull().default(false),
+  isCompleted: boolean('is_completed').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('idx_finance_notes_group_id').on(table.groupId, table.id),
+  index('idx_finance_notes_group_target').on(table.groupId, table.targetAt),
+]);
+
+export const financeNoteReminders = pgTable('finance_note_reminders', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  groupId: uuid('group_id').notNull(),
+  noteId: uuid('note_id').notNull(),
+  createdBy: uuid('created_by').notNull(),
+  reminderType: varchar('reminder_type', { length: 16 }).$type<'relative' | 'recurring'>().notNull().default('relative'),
+  leadMinutes: integer('lead_minutes'),
+  remindAt: timestamp('remind_at', { withTimezone: true, mode: 'date' }).notNull(),
+  recurrence: varchar('recurrence', { length: 16 }).$type<'none' | 'daily' | 'weekly' | 'monthly' | 'yearly'>().notNull().default('none'),
+  untilDate: date('until_date'),
+  message: text('message'),
+  status: varchar('status', { length: 16 }).$type<'pending' | 'sent' | 'cancelled'>().notNull().default('pending'),
+  deliveredCount: integer('delivered_count').notNull().default(0),
+  lastNotifiedAt: timestamp('last_notified_at', { withTimezone: true, mode: 'date' }),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, (table) => [
+  foreignKey({ columns: [table.groupId, table.noteId], foreignColumns: [financeNotes.groupId, financeNotes.id], name: 'finance_note_reminders_note_group_fk' }).onDelete('cascade'),
+  foreignKey({ columns: [table.groupId, table.createdBy], foreignColumns: [financeGroupMembers.groupId, financeGroupMembers.userId], name: 'finance_note_reminders_member_group_fk' }).onDelete('cascade'),
+  index('idx_finance_note_reminders_due').on(table.status, table.remindAt),
+  check('finance_note_reminders_type_check', sql`${table.reminderType} IN ('relative', 'recurring')`),
+  check('finance_note_reminders_recurrence_check', sql`${table.recurrence} IN ('none', 'daily', 'weekly', 'monthly', 'yearly')`),
+  check('finance_note_reminders_status_check', sql`${table.status} IN ('pending', 'sent', 'cancelled')`),
+  check('finance_note_reminders_delivered_count_check', sql`${table.deliveredCount} >= 0`),
+]);
+
+export const financeScheduledTasks = pgTable('finance_scheduled_tasks', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  groupId: uuid('group_id').notNull().references(() => financeGroups.id, { onDelete: 'cascade' }),
+  createdBy: uuid('created_by').notNull(),
+  title: varchar('title', { length: 200 }).notNull(),
+  details: text('details'),
+  scheduleAt: timestamp('schedule_at', { withTimezone: true, mode: 'date' }).notNull(),
+  recurrence: varchar('recurrence', { length: 16 }).$type<'once' | 'daily' | 'weekly' | 'monthly'>().notNull().default('once'),
+  isActive: boolean('is_active').notNull().default(true),
+  lastNotifiedAt: timestamp('last_notified_at', { withTimezone: true, mode: 'date' }),
+  completedAt: timestamp('completed_at', { withTimezone: true, mode: 'date' }),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, (table) => [
+  foreignKey({ columns: [table.groupId, table.createdBy], foreignColumns: [financeGroupMembers.groupId, financeGroupMembers.userId], name: 'finance_scheduled_tasks_member_group_fk' }).onDelete('cascade'),
+  index('idx_finance_scheduled_tasks_group_schedule').on(table.groupId, table.scheduleAt),
+  check('finance_scheduled_tasks_recurrence_check', sql`${table.recurrence} IN ('once', 'daily', 'weekly', 'monthly')`),
+]);
 
 /**
  * Singleton authentication state storing the active HMAC version and rotation audit metadata.

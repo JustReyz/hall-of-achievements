@@ -1,0 +1,45 @@
+# Savers features in Hall of Achievements
+
+**Goal:** Add the Savers and TrackMoney financial workflows to Hall using Next.js, TypeScript and the existing PostgreSQL connection, without changing existing archive data or flows.
+
+**Architecture:** Introduce a separate `/finance` application area and `/api/finance` routes. Use additive `finance_` tables with their own identities, sessions, groups, memberships, wallets, transactions, sources, budgets and planner records. Hall's owner session cannot identify a finance group member, so a separate authenticated finance identity and server-side membership checks are required for shared-wallet parity. Never accept a client-supplied user ID as proof of identity.
+
+**Sources:** `G:/Projects/Savers/MERGE_PREP.md`, `apps/web/src` and `services/local-api/src`; `G:/Projects/TrackMoney/app` and `database/migrations`. The source SQL includes destructive statements and must not be executed against Hall's database.
+
+## Constraints
+
+- Preserve the existing Hall UI, authentication, data and service worker. Namespace new routes, tables and styles.
+- Store money as exact decimal values or integer minor units; compute balances from one authoritative ledger and use transaction locks and idempotency for mutations.
+- Enforce membership and group ownership in server queries; bind wallets, sources and transactions to the same group.
+- Do not store credentials or session tokens in browser localStorage. Retain private responses, CSRF protection and secure cookies.
+- Do not enable automatic messages or notifications as a side effect of installation, login or saving records.
+- Extend both database initialization paths and versioned export/restore; verify old archives and existing databases remain compatible.
+- Keep any import and production data migration separate from implementation; reconcile counts and balances on a copy before a cutover.
+
+## Delivery sequence
+
+1. Define finance identities, session lifecycle, group membership and API contracts. Add namespaced, additive schema with migrations and authorization checks.
+2. Implement group, wallet and transaction APIs with exact amounts, atomic balance checks and tests for concurrent writes and cross-group access. Add sources, budgets, summaries and exports.
+3. Port the wallet and group UI into `/finance`, scoped to the existing design system. Preserve Hall navigation, authentication and archive behavior.
+4. Add notes, reminders and scheduled-task metadata with explicit notification controls. Integrate the bot through authenticated internal endpoints only after the contracts and delivery semantics are verified.
+5. Add finance backup/restore, legacy-data import tooling, and reconciliation against an isolated copy. Verify old Hall archives, existing data and rollback before any live migration.
+
+## Source behavior to retain
+
+- Savers: regular and goal wallets, wallet members, income/expense records, categories, notes, planner, profile and export flows.
+- TrackMoney: group membership and roles, sources, monthly budgets, summaries and transaction exports.
+- Planner recurrence values include once/daily/weekly/monthly for tasks and none/daily/weekly/monthly/yearly for note reminders.
+
+## Verification
+
+Use isolated PGlite and a disposable PostgreSQL database for migrations and financial concurrency; never run the source `DROP`/`TRUNCATE` script. Verify authorization across members and groups, old and new backup round trips, existing Hall tests, and real browser behavior at desktop and mobile sizes. Record any integration that cannot be verified without external bot or storage access.
+
+## Work in progress
+
+The current draft adds additive finance tables behind `FINANCE_EXPERIMENTAL=true`, an independent finance account/session flow, groups with one-time invitation links, wallets, exact-amount income/expense records with idempotent writes, edits and soft deletes, sources, monthly budgets, summaries and CSV export. The `/finance` UI covers account onboarding, group/member access, wallet controls, transaction entry/edit/delete, sources, budget, summary, group/member/source lifecycle, and planner notes/reminders/tasks. Archive v6 round-trips finance records while excluding credentials and revoking target sessions and outstanding invitations. Local pending-transaction recovery uses a server lookup by idempotency key. Archive tables and existing data remain separate; do not enable the flag against a live database.
+
+Profile pictures are limited to the signed-in user, processed into bounded WebP images, and included in finance archive export/restore. Users can opt in to browser notifications and manually send a generic reminder to their current device; this does not update delivery status or send to other devices. Import and remote reminder delivery remain incomplete; bot integration is out of scope. Reminders never send automatically. The page was smoke-checked in Next.js and contrast/focus styles were reviewed, but a real browser keyboard/screen-reader click-through is unavailable. Finance concurrency and archive checks use PGlite; production PostgreSQL behavior has not been verified. Complete those checks and deployment-specific security review before release.
+
+## Savers import preflight
+
+`npm run finance:preflight -- <export.json>` reads a JSON object with `users`, `wallets`, `wallet_members`, and `transactions` arrays from the Savers schema. Export `wallets.current_balance` and `transactions.amount` as decimal strings so the tool can reconcile amounts without floating-point rounding. It checks duplicate IDs, references, missing wallet members, positive transaction amounts, and balances. It outputs counts and per-wallet reconciliation and returns a nonzero exit code on invalid data. It does not write to a database or import records. Do not include the source export in version control; it may contain password hashes and personal data. User-to-account and wallet-to-group mappings, planner records, and the actual importer remain to be implemented.
