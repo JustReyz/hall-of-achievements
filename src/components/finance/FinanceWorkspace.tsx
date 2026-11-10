@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { prepareProfileImage } from '@/lib/finance/profile-image';
+import { deviceNotificationPermission, enableDeviceNotifications, sendDeviceReminder } from '@/lib/finance/device-reminders';
 import styles from './FinanceWorkspace.module.css';
 
 type Group = { id: string; name: string; role: 'owner' | 'admin' | 'member' };
@@ -163,6 +164,7 @@ export default function FinanceWorkspace() {
   const [plannerReminders, setPlannerReminders] = useState<FinanceReminder[]>([]);
   const [plannerTasks, setPlannerTasks] = useState<FinanceScheduledTask[]>([]);
   const [plannerLoading, setPlannerLoading] = useState(false);
+  const [devicePermission, setDevicePermission] = useState<NotificationPermission | 'unsupported'>('unsupported');
   const [noteTitle, setNoteTitle] = useState('');
   const [noteContent, setNoteContent] = useState('');
   const [noteTargetAt, setNoteTargetAt] = useState('');
@@ -262,6 +264,13 @@ export default function FinanceWorkspace() {
   useEffect(() => {
     void refreshSession();
   }, [refreshSession]);
+
+  useEffect(() => {
+    const refreshPermission = () => setDevicePermission(deviceNotificationPermission());
+    refreshPermission();
+    window.addEventListener('focus', refreshPermission);
+    return () => window.removeEventListener('focus', refreshPermission);
+  }, []);
 
   useEffect(() => {
     const token = new URLSearchParams(window.location.hash.slice(1)).get('invite');
@@ -636,6 +645,25 @@ export default function FinanceWorkspace() {
       await request('/api/finance/planner/reminders', { method: 'POST', body: JSON.stringify({ groupId, noteId: reminderNoteId, reminderType: reminderRecurrence === 'none' ? 'relative' : 'recurring', recurrence: reminderRecurrence, remindAt: new Date(reminderAt).toISOString(), message: reminderMessage.trim() || null }) });
       setReminderMessage(''); await refreshPlanner(); setNotice('Pengingat tersimpan. Tidak ada notifikasi yang dikirim otomatis.');
     } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const enableReminderNotifications = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try {
+      const permission = await enableDeviceNotifications();
+      setDevicePermission(permission);
+      setNotice(permission === 'granted' ? 'Notifikasi perangkat aktif. Pilih pengingat untuk mengirim.' : 'Izin notifikasi belum diberikan.');
+    } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const sendReminderToDevice = async (id: string) => {
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try { await sendDeviceReminder(id); setNotice('Notifikasi diminta untuk perangkat ini. Status pengingat tetap tersimpan.'); }
+    catch (cause) { reportError(cause); }
     finally { busyRef.current = false; setBusy(false); }
   };
 
@@ -1727,10 +1755,14 @@ export default function FinanceWorkspace() {
                   </div>
                   <div>
                     <h3>Pengingat</h3>
+                    <p className={styles.subtle}>Kirim notifikasi secara manual ke perangkat ini saat halaman terbuka. Jadwal tidak mengirim otomatis.</p>
+                    {devicePermission === 'default' && <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void enableReminderNotifications()}>Aktifkan notifikasi perangkat</button>}
+                    {devicePermission === 'denied' && <p className={styles.subtle}>Izin notifikasi diblokir. Ubah izin melalui pengaturan browser.</p>}
+                    {devicePermission === 'unsupported' && <p className={styles.subtle}>Notifikasi perangkat tidak tersedia di browser ini.</p>}
                     {plannerReminders.length ? <ul className={styles.list}>{plannerReminders.map((reminder) => (
                       <li className={styles.row} key={reminder.id}>
                         <div><strong>{plannerNotes.find((note) => note.id === reminder.noteId)?.title ?? 'Catatan'}</strong><small>{new Date(reminder.remindAt).toLocaleString('id-ID')} · {reminder.recurrence === 'none' ? 'Sekali' : `Berulang ${reminder.recurrence}`} · {reminder.status === 'cancelled' ? 'Dibatalkan' : reminder.status === 'sent' ? 'Terkirim' : 'Menunggu'}</small></div>
-                        {reminder.status === 'pending' && <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void cancelPlannerReminder(reminder.id)}>Batalkan</button>}
+                        {reminder.status === 'pending' && <div className={styles.rowActions}><button type="button" className={styles.buttonSecondary} disabled={busy || devicePermission !== 'granted'} onClick={() => void sendReminderToDevice(reminder.id)}>Kirim ke perangkat ini</button><button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void cancelPlannerReminder(reminder.id)}>Batalkan</button></div>}
                       </li>
                     ))}</ul> : <p className={styles.empty}>Belum ada pengingat.</p>}
                     {plannerNotes.length > 0 && <details className={styles.details}>
