@@ -1661,6 +1661,18 @@ export default function FinanceWorkspace() {
                           <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void updatePlannerNote(note, { isPinned: !note.isPinned })}>{note.isPinned ? 'Lepas pin' : 'Sematkan'}</button>
                           <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void removePlannerNote(note)}>Hapus</button>
                         </div>
+                        <details className={styles.details}>
+                          <summary>Ubah catatan</summary>
+                          <form className={styles.form} onSubmit={(event) => {
+                            event.preventDefault();
+                            const values = new FormData(event.currentTarget);
+                            void updatePlannerNote(note, { title: String(values.get('title') ?? '').trim(), content: String(values.get('content') ?? '').trim() || null });
+                          }}>
+                            <label>Judul<input name="title" required maxLength={200} disabled={busy} defaultValue={note.title} /></label>
+                            <label>Rincian<textarea name="content" maxLength={10000} disabled={busy} defaultValue={note.content ?? ''} /></label>
+                            <button className={styles.button} disabled={busy}>Simpan perubahan</button>
+                          </form>
+                        </details>
                       </li>
                     ))}</ul> : <p className={styles.empty}>Belum ada catatan.</p>}
                     <details className={styles.details}>
