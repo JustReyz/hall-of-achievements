@@ -461,9 +461,10 @@ describe('Adversarial Verification: Concurrency, Cooldown Durability & Idempoten
       expect(matches.sort()).toEqual(['activate', 'install', 'notificationclick', 'push'].sort());
     });
 
-    it('restricts notificationclick navigation to same-origin root route', () => {
+    it('restricts notificationclick navigation to approved same-origin routes', () => {
       expect(swContent).toContain("clients.openWindow(urlToOpen)");
-      expect(swContent).toContain("client.url.includes(self.location.origin)");
+      expect(swContent).toContain("new URL(client.url).origin === self.location.origin");
+      expect(swContent).toContain("=== '/finance' ? '/finance' : '/'");
       expect(swContent).toContain("client.focus()");
     });
 

@@ -9,10 +9,12 @@ import { GET as getGroups, POST as postGroup } from '@/app/api/finance/groups/ro
 import { GET as getWallets, POST as postWallet } from '@/app/api/finance/wallets/route';
 import { GET as getTransactions, POST as postTransaction } from '@/app/api/finance/transactions/route';
 import { PATCH as patchTransaction } from '@/app/api/finance/transactions/[id]/route';
+import { POST as financeLogin } from '@/app/api/finance/session/route';
+import * as financePassword from '@/lib/finance/password';
 
 describe('finance API authorization', () => {
   beforeEach(async () => { vi.stubEnv('FINANCE_EXPERIMENTAL', 'true'); await resetDatabase(); });
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
   it('requires both sessions, rejects foreign origins, and isolates group members', async () => {
     const db = await getDb();
@@ -40,6 +42,10 @@ describe('finance API authorization', () => {
       method: 'POST', headers: { ...headers, origin: 'https://evil.example' }, body: JSON.stringify({ name: 'No' }),
     }));
     expect(foreign.status).toBe(403);
+    const oversized = await postGroup(new NextRequest('http://localhost:3000/api/finance/groups', {
+      method: 'POST', headers, body: 'x'.repeat(65537),
+    }));
+    expect(oversized.status).toBe(413);
     const groupResponse = await postGroup(new NextRequest('http://localhost:3000/api/finance/groups', {
       method: 'POST', headers, body: JSON.stringify({ name: 'Home' }),
     }));
@@ -78,5 +84,18 @@ describe('finance API authorization', () => {
     expect((await hiddenResult.json()).transaction).toBeNull();
     const invalid = await getTransactions(new NextRequest('http://localhost:3000/api/finance/transactions?requestKey=invalid', { headers: ownerHeaders }));
     expect(invalid.status).toBe(400);
+  });
+
+  it('reserves rate-limit capacity before expensive concurrent password checks', async () => {
+    const verify = vi.spyOn(financePassword, 'verifyFinancePassword').mockResolvedValue(false);
+    const attempt = () => financeLogin(new NextRequest('http://localhost:3000/api/finance/session', {
+      method: 'POST', headers: { origin: 'http://localhost:3000' }, body: JSON.stringify({ action: 'login', username: 'unknown-user', password: 'wrong-password' }),
+    }));
+    const results = await Promise.all(Array.from({ length: 12 }, attempt));
+    expect(results.filter((response) => response.status === 401)).toHaveLength(5);
+    expect(results.filter((response) => response.status === 429)).toHaveLength(7);
+    expect(verify).toHaveBeenCalledTimes(5);
+    const oversized = await financeLogin(new NextRequest('http://localhost:3000/api/finance/session', { method: 'POST', headers: { origin: 'http://localhost:3000', 'x-vercel-forwarded-for': '203.0.113.24' }, body: 'x'.repeat(8193) }));
+    expect(oversized.status).toBe(413);
   });
 });

@@ -114,7 +114,7 @@ describe('Adversarial Stress Test: Milestone 2 Cancellation, Out-of-Order & Dens
       const originalAbortController = globalThis.AbortController;
 
       // Wrap AbortController to observe all instances
-      vi.spyOn(globalThis, 'AbortController').mockImplementation(() => {
+      vi.spyOn(globalThis, 'AbortController').mockImplementation(function () {
         const ctrl = new originalAbortController();
         controllers.push(ctrl);
         return ctrl;

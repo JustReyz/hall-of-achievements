@@ -302,14 +302,14 @@ describe('Integration: thumbnail framing', () => {
         state: 'ready',
         thumbnailPositionX: 1.5,
       })
-    ).rejects.toThrow(/check constraint/);
+    ).rejects.toMatchObject({ cause: { code: '23514' } });
 
     await expect(
       db
         .update(achievements)
         .set({ thumbnailPositionY: -0.01 })
         .where(eq(achievements.id, seeded.id))
-    ).rejects.toThrow(/check constraint/);
+    ).rejects.toMatchObject({ cause: { code: '23514' } });
   });
 
   it('writes the current archive version and preserves framing through export and restore', async () => {

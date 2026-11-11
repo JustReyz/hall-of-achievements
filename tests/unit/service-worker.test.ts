@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 
 describe('Unit: Service Worker Architecture & Privacy Boundaries (AC6, AC9)', () => {
   const swPath = path.resolve(process.cwd(), 'public', 'sw.js');
@@ -44,5 +45,23 @@ describe('Unit: Service Worker Architecture & Privacy Boundaries (AC6, AC9)', ()
     expect(swContent).not.toContain('VAPID_PRIVATE_KEY');
     expect(swContent).not.toContain('bearer');
     expect(swContent).not.toContain('Authorization');
+  });
+
+  it('focuses the matching finance page and rejects external notification destinations', async () => {
+    const handlers: Record<string, (event: { notification: { data: { url: string }; close: () => void }; waitUntil: (task: Promise<unknown>) => void }) => void> = {};
+    const financeFocus = vi.fn().mockResolvedValue(undefined);
+    const fakeFocus = vi.fn().mockResolvedValue(undefined);
+    const openWindow = vi.fn().mockResolvedValue(undefined);
+    let clients = [{ url: 'https://app.example/finance', focus: financeFocus }];
+    const self = { addEventListener: (name: string, handler: typeof handlers[string]) => { handlers[name] = handler; }, location: { origin: 'https://app.example' }, clients: { matchAll: async () => clients, openWindow } };
+    vm.runInNewContext(swContent, { self, URL });
+    let pending: Promise<unknown> = Promise.resolve();
+    const click = (url: string) => handlers.notificationclick!({ notification: { data: { url }, close: vi.fn() }, waitUntil: (task) => { pending = task; } });
+    click('/finance'); await pending;
+    expect(financeFocus).toHaveBeenCalledOnce();
+    clients = [{ url: 'https://evil.example/?https://app.example/', focus: fakeFocus }];
+    click('https://evil.example/'); await pending;
+    expect(fakeFocus).not.toHaveBeenCalled();
+    expect(openWindow).toHaveBeenCalledWith('/');
   });
 });

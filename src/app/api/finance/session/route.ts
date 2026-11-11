@@ -8,6 +8,8 @@ import { env } from '@/lib/env';
 import { checkRateLimit, extractClientIp, recordFailedAttempt, resetRateLimit } from '@/lib/security/rate-limit';
 import { checkFinanceOrigin, financeCookieName, financeErrorResponse, FinanceAuthError, lockHallSession, requireFinanceUser } from '@/lib/finance/auth';
 import { hashFinancePassword, verifyFinancePassword } from '@/lib/finance/password';
+import { FinanceLedgerError, readFinanceBody } from '@/lib/finance/ledger';
+import { lockFinanceRestore } from '@/lib/finance/restore-lock';
 
 const SESSION_SECONDS = 8 * 60 * 60;
 const DUMMY_HASH = `scrypt$131072$8$1$${'0'.repeat(32)}$${'0'.repeat(128)}`;
@@ -31,10 +33,10 @@ export async function POST(request: NextRequest) {
     const ip = `finance:${extractClientIp(request)}`;
     const limit = await checkRateLimit(ip);
     if (!limit.allowed) return jsonError('Too many attempts. Please try again later.', 429, 'RATE_LIMITED');
-    let body: unknown;
-    try { body = await request.json(); } catch { return jsonError('Invalid JSON.', 400, 'INVALID_INPUT'); }
-    if (!body || typeof body !== 'object' || Array.isArray(body)) return jsonError('Invalid request.', 400, 'INVALID_INPUT');
-    const { action, username, password, inviteToken: rawInviteToken } = body as Record<string, unknown>;
+    let body: Record<string, unknown>;
+    try { body = await readFinanceBody(request, 8192); }
+    catch (error) { if (error instanceof FinanceLedgerError) return jsonError(error.message, error.status, error.code); throw error; }
+    const { action, username, password, inviteToken: rawInviteToken } = body;
     let invitationHash: string | null = null;
     if (action === 'register' && rawInviteToken !== undefined) {
       if (typeof rawInviteToken !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(rawInviteToken))
@@ -54,18 +56,22 @@ export async function POST(request: NextRequest) {
     const accountKey = `finance-account:${name}`;
     const accountLimit = await checkRateLimit(accountKey);
     if (!accountLimit.allowed) return jsonError('Too many attempts. Please try again later.', 429, 'RATE_LIMITED');
+    if (action !== undefined && action !== 'login' && action !== 'register') return jsonError('Invalid action.', 400, 'INVALID_INPUT');
+    if (action === 'register' && password.length < 12) return jsonError('Password must be at least 12 characters.', 400, 'INVALID_INPUT');
+    if (!(await recordFailedAttempt(ip)).allowed || !(await recordFailedAttempt(accountKey)).allowed) return jsonError('Too many attempts. Please try again later.', 429, 'RATE_LIMITED');
     const db = await getDb();
     let passwordHash: string;
     let existingId: string | undefined;
     if (action === 'register') {
-      if (password.length < 12) return jsonError('Password must be at least 12 characters.', 400, 'INVALID_INPUT');
+      if (invitationHash) {
+        const [invitation] = await db.select().from(financeInvitations).where(eq(financeInvitations.tokenHash, invitationHash));
+        if (!invitation || invitation.claimedAt || invitation.revokedAt || invitation.expiresAt.getTime() <= Date.now()) return jsonError('Invalid or expired invitation.', 400, 'INVALID_INVITATION');
+      }
       passwordHash = await hashFinancePassword(password);
     } else if (action === undefined || action === 'login') {
       const [found] = await db.select().from(financeUsers).where(eq(financeUsers.username, name)).limit(1);
       const dummyHash = found?.passwordHash ?? DUMMY_HASH;
       if (!await verifyFinancePassword(password, dummyHash) || !found) {
-        await recordFailedAttempt(ip);
-        await recordFailedAttempt(accountKey);
         return jsonError('Invalid username or password.', 401, 'INVALID_CREDENTIALS');
       }
       existingId = found.id;
@@ -74,6 +80,7 @@ export async function POST(request: NextRequest) {
     const { rawToken, tokenHash } = generateSessionToken();
     const expiresAt = new Date(Date.now() + SESSION_SECONDS * 1000);
     const user = await db.transaction(async (tx) => {
+      await lockFinanceRestore(tx);
       if (action === 'register') {
         if (invitationHash) {
           const [invitation] = await tx.select().from(financeInvitations).where(eq(financeInvitations.tokenHash, invitationHash)).for('update');

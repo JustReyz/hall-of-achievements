@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns } from 'drizzle-orm';
 import type { AppDatabase } from '@/lib/db';
 import { financeGroupMembers, financeNoteReminders, financeNotes, financeScheduledTasks } from '@/lib/db/schema';
 import { validateCalendarDate } from '@/lib/validation/achievement';
@@ -33,7 +33,9 @@ async function requireMembership(db: AppDatabase, userId: string, groupId: strin
 export async function listNotes(db: AppDatabase, userId: string, groupIdValue: unknown) {
   const groupId = requireUuid(groupIdValue, 'groupId');
   await requireMembership(db, userId, groupId);
-  return db.select().from(financeNotes).where(eq(financeNotes.groupId, groupId))
+  return db.select(getTableColumns(financeNotes)).from(financeNotes)
+    .innerJoin(financeGroupMembers, and(eq(financeGroupMembers.groupId, financeNotes.groupId), eq(financeGroupMembers.userId, userId)))
+    .where(eq(financeNotes.groupId, groupId))
     .orderBy(desc(financeNotes.isPinned), desc(financeNotes.updatedAt));
 }
 
@@ -119,7 +121,9 @@ function reminderShape(input: Record<string, unknown>, current?: { reminderType:
 export async function listReminders(db: AppDatabase, userId: string, groupIdValue: unknown) {
   const groupId = requireUuid(groupIdValue, 'groupId');
   await requireMembership(db, userId, groupId);
-  return db.select().from(financeNoteReminders).where(eq(financeNoteReminders.groupId, groupId)).orderBy(desc(financeNoteReminders.remindAt));
+  return db.select(getTableColumns(financeNoteReminders)).from(financeNoteReminders)
+    .innerJoin(financeGroupMembers, and(eq(financeGroupMembers.groupId, financeNoteReminders.groupId), eq(financeGroupMembers.userId, userId)))
+    .where(eq(financeNoteReminders.groupId, groupId)).orderBy(desc(financeNoteReminders.remindAt));
 }
 
 export async function createReminder(db: AppDatabase, context: FinanceSessionContext, input: Record<string, unknown>) {
@@ -191,7 +195,9 @@ export async function createScheduledTask(db: AppDatabase, context: FinanceSessi
 export async function listScheduledTasks(db: AppDatabase, userId: string, groupIdValue: unknown) {
   const groupId = requireUuid(groupIdValue, 'groupId');
   await requireMembership(db, userId, groupId);
-  return db.select().from(financeScheduledTasks).where(eq(financeScheduledTasks.groupId, groupId)).orderBy(desc(financeScheduledTasks.scheduleAt));
+  return db.select(getTableColumns(financeScheduledTasks)).from(financeScheduledTasks)
+    .innerJoin(financeGroupMembers, and(eq(financeGroupMembers.groupId, financeScheduledTasks.groupId), eq(financeGroupMembers.userId, userId)))
+    .where(eq(financeScheduledTasks.groupId, groupId)).orderBy(desc(financeScheduledTasks.scheduleAt));
 }
 
 export async function updateScheduledTask(db: AppDatabase, context: FinanceSessionContext, idValue: unknown, input: Record<string, unknown>) {

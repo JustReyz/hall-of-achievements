@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PGlite } from '@electric-sql/pglite';
 import { createInMemoryDb, type AppDatabase } from '@/lib/db';
-import { authState, financeGroupMembers, financeGroups, financeSessions, financeTransactions, financeUsers, financeWallets, sessions } from '@/lib/db/schema';
+import { authState, financeGroupMembers, financeGroups, financeNoteReminders, financeNotes, financeScheduledTasks, financeSessions, financeTransactions, financeUsers, financeWallets, sessions } from '@/lib/db/schema';
 import { deriveAuthVersion } from '@/lib/auth/crypto';
 import { eq } from 'drizzle-orm';
 import type { FinanceSessionContext } from '@/lib/finance/auth';
 import { createGroup, createSource, createTransaction, createWallet, deleteGroup, deleteSource, deleteTransaction, deleteWallet, getGroupBudget, getGroupSummary, listGroups, listSources, listTransactions, listWallets, removeGroupMember, setGroupBudget, updateGroup, updateGroupMemberRole, updateSource, updateTransaction, updateWallet } from '@/lib/finance/ledger';
+import { listReminders } from '@/lib/finance/planner';
 
 describe('finance ledger', () => {
   let db: AppDatabase;
@@ -34,6 +35,29 @@ describe('finance ledger', () => {
   });
 
   afterEach(async () => { await pglite.close(); vi.unstubAllEnvs(); });
+
+  it.each(['source', 'budget', 'note', 'task'] as const)('does not delete a group containing %s data', async (kind) => {
+    const group = await createGroup(db, ownerContext, { name: 'Protected data' });
+    if (kind === 'source') await createSource(db, ownerContext, { groupId: group.id, name: 'Bank', type: 'bank' });
+    if (kind === 'budget') await setGroupBudget(db, ownerContext, { groupId: group.id, monthlyLimit: '100.00', enabled: true });
+    if (kind === 'note') await db.insert(financeNotes).values({ groupId: group.id, createdBy: owner, title: 'Keep me' });
+    if (kind === 'task') await db.insert(financeScheduledTasks).values({ groupId: group.id, createdBy: owner, title: 'Keep me', scheduleAt: new Date() });
+    await expect(deleteGroup(db, ownerContext, group.id)).rejects.toMatchObject({ code: 'GROUP_HAS_DATA', status: 409 });
+    expect(await db.select().from(financeGroups).where(eq(financeGroups.id, group.id))).toHaveLength(1);
+  });
+
+  it('removes a member without deleting their planner records', async () => {
+    const group = await createGroup(db, ownerContext, { name: 'Protected member data' });
+    await db.insert(financeGroupMembers).values({ groupId: group.id, userId: outsider, role: 'member' });
+    const [note] = await db.insert(financeNotes).values({ groupId: group.id, createdBy: outsider, title: 'Member note' }).returning();
+    await db.insert(financeNoteReminders).values({ groupId: group.id, noteId: note!.id, createdBy: outsider, remindAt: new Date() });
+    await db.insert(financeScheduledTasks).values({ groupId: group.id, createdBy: outsider, title: 'Member task', scheduleAt: new Date() });
+    await expect(removeGroupMember(db, ownerContext, group.id, outsider)).resolves.toMatchObject({ removed: true });
+    expect(await db.select().from(financeGroupMembers).where(eq(financeGroupMembers.userId, outsider))).toHaveLength(0);
+    expect(await db.select().from(financeNoteReminders)).toHaveLength(1);
+    expect(await db.select().from(financeScheduledTasks)).toHaveLength(1);
+    await expect(listReminders(db, outsider, group.id)).rejects.toMatchObject({ status: 404 });
+  });
 
   it('isolates groups and wallets, replays idempotent writes and rejects key reuse', async () => {
     const group = await createGroup(db, ownerContext, { name: 'Household' });
@@ -79,6 +103,8 @@ describe('finance ledger', () => {
     const income = await createTransaction(db, ownerContext, crypto.randomUUID(), { walletId: wallet.id, type: 'income', amount: '100' });
     const expense = await createTransaction(db, ownerContext, crypto.randomUUID(), { walletId: wallet.id, type: 'expense', amount: '40' });
 
+    await expect(updateTransaction(db, ownerContext, income.id, { amount: '10' }))
+      .rejects.toMatchObject({ code: 'INSUFFICIENT_FUNDS' });
     await expect(updateTransaction(db, ownerContext, expense.id, { type: 'expense', amount: '101' }))
       .rejects.toMatchObject({ code: 'INSUFFICIENT_FUNDS' });
     await updateTransaction(db, ownerContext, expense.id, { type: 'expense', amount: '60', category: 'Bills', notes: 'Updated', transactionDate: '2026-11-01' });
@@ -88,6 +114,18 @@ describe('finance ledger', () => {
     expect((await listWallets(db, owner, group.id))[0]?.balance).toBe('100.00');
     expect(await listTransactions(db, owner, wallet.id)).toHaveLength(1);
     expect(income.id).not.toBe(expense.id);
+  });
+
+  it('prevents deleting income when that would make a wallet negative', async () => {
+    const group = await createGroup(db, ownerContext, { name: 'Income protection' });
+    const wallet = await createWallet(db, ownerContext, { groupId: group.id, name: 'Wallet', type: 'regular' });
+    const income = await createTransaction(db, ownerContext, crypto.randomUUID(), { walletId: wallet.id, type: 'income', amount: '100' });
+    await createTransaction(db, ownerContext, crypto.randomUUID(), { walletId: wallet.id, type: 'expense', amount: '70' });
+    await expect(deleteTransaction(db, ownerContext, income.id)).rejects.toMatchObject({ code: 'INSUFFICIENT_FUNDS', status: 409 });
+    expect((await listWallets(db, owner, group.id))[0]?.balance).toBe('30.00');
+    await createTransaction(db, ownerContext, crypto.randomUUID(), { walletId: wallet.id, type: 'income', amount: '70' });
+    await deleteTransaction(db, ownerContext, income.id);
+    expect((await listWallets(db, owner, group.id))[0]?.balance).toBe('0.00');
   });
 
   it('scopes sources and budgets to group membership and summarizes exact ledger totals', async () => {
@@ -159,10 +197,13 @@ describe('finance ledger', () => {
     const source = await createSource(db, ownerContext, { groupId: group.id, name: 'Cash', type: 'cash' });
     expect(await updateSource(db, ownerContext, source.id, { name: 'Wallet cash', type: 'e-wallet' })).toMatchObject({ name: 'Wallet cash' });
     const wallet = await createWallet(db, ownerContext, { groupId: group.id, name: 'Daily', type: 'regular' });
-    await createTransaction(db, ownerContext, crypto.randomUUID(), { walletId: wallet.id, sourceId: source.id, type: 'income', amount: '5' });
+    const transaction = await createTransaction(db, ownerContext, crypto.randomUUID(), { walletId: wallet.id, sourceId: source.id, type: 'income', amount: '5' });
     await deleteSource(db, ownerContext, source.id);
     await expect(listSources(db, owner, group.id)).resolves.toEqual([]);
     await expect(listTransactions(db, owner, wallet.id)).resolves.toMatchObject([{ sourceName: 'Wallet cash' }]);
+    await expect(updateTransaction(db, ownerContext, transaction.id, { sourceId: source.id, notes: 'Updated history' })).resolves.toMatchObject({ id: transaction.id });
+    const otherTransaction = await createTransaction(db, ownerContext, crypto.randomUUID(), { walletId: wallet.id, type: 'income', amount: '1' });
+    await expect(updateTransaction(db, ownerContext, otherTransaction.id, { sourceId: source.id })).rejects.toMatchObject({ status: 404 });
     await expect(createTransaction(db, ownerContext, crypto.randomUUID(), { walletId: wallet.id, sourceId: source.id, type: 'income', amount: '5' })).rejects.toMatchObject({ status: 404 });
     await expect(deleteGroup(db, ownerContext, group.id)).rejects.toMatchObject({ status: 409 });
 

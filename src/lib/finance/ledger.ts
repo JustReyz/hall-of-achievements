@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull, ne, sql } from 'drizzle-orm';
 import type { AppDatabase } from '@/lib/db';
-import { financeBudgets, financeGroupMembers, financeGroups, financeSources, financeTransactions, financeUsers, financeWallets } from '@/lib/db/schema';
+import { financeBudgets, financeGroupMembers, financeGroups, financeNotes, financeScheduledTasks, financeSources, financeTransactions, financeUsers, financeWallets } from '@/lib/db/schema';
 import { formatMoney, parseMoney } from './money';
 import { validateCalendarDate } from '@/lib/validation/achievement';
 import { lockFinanceSession, type FinanceSessionContext } from './auth';
@@ -18,9 +18,20 @@ export function requireUuid(value: unknown, label: string): string {
   return value.toLowerCase();
 }
 
-export async function readFinanceBody(request: Request): Promise<Record<string, unknown>> {
+export async function readFinanceBody(request: Request, maxBytes = 65536): Promise<Record<string, unknown>> {
+  const reader = request.body?.getReader();
+  if (!reader) throw new FinanceLedgerError('INVALID_INPUT', 'JSON request body required.', 400);
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) { await reader.cancel(); throw new FinanceLedgerError('INVALID_INPUT', 'Request body is too large.', 413); }
+    chunks.push(value);
+  }
   let value: unknown;
-  try { value = await request.json(); }
+  try { value = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
   catch { throw new FinanceLedgerError('INVALID_INPUT', 'Invalid JSON request body.', 400); }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new FinanceLedgerError('INVALID_INPUT', 'Request body must be a JSON object.', 400);
@@ -92,7 +103,11 @@ export async function deleteGroup(db: AppDatabase, context: FinanceSessionContex
     await requireGroupOwner(tx, id, context.userId);
     const [wallet] = await tx.select({ id: financeWallets.id }).from(financeWallets).where(eq(financeWallets.groupId, id)).limit(1);
     const [transaction] = await tx.select({ id: financeTransactions.id }).from(financeTransactions).where(eq(financeTransactions.groupId, id)).limit(1);
-    if (wallet || transaction) throw new FinanceLedgerError('GROUP_HAS_DATA', 'Groups with wallets or transaction history cannot be deleted.', 409);
+    const [source] = await tx.select({ id: financeSources.id }).from(financeSources).where(eq(financeSources.groupId, id)).limit(1);
+    const [budget] = await tx.select({ id: financeBudgets.id }).from(financeBudgets).where(eq(financeBudgets.groupId, id)).limit(1);
+    const [note] = await tx.select({ id: financeNotes.id }).from(financeNotes).where(eq(financeNotes.groupId, id)).limit(1);
+    const [task] = await tx.select({ id: financeScheduledTasks.id }).from(financeScheduledTasks).where(eq(financeScheduledTasks.groupId, id)).limit(1);
+    if (wallet || transaction || source || budget || note || task) throw new FinanceLedgerError('GROUP_HAS_DATA', 'Groups containing finance or planner data cannot be deleted.', 409);
     await tx.delete(financeGroups).where(eq(financeGroups.id, id));
     await lockFinanceSession(tx, context);
     return { id, deleted: true };
@@ -324,7 +339,7 @@ export async function updateTransaction(db: AppDatabase, context: FinanceSession
     }
     const amount = input.amount === undefined ? current.amount : amountValue(input.amount);
     const sourceId = input.sourceId === undefined ? current.sourceId : input.sourceId === null || input.sourceId === '' ? null : requireUuid(input.sourceId, 'sourceId');
-    if (sourceId) {
+    if (sourceId && sourceId !== current.sourceId) {
       const [source] = await tx.select({ id: financeSources.id }).from(financeSources)
         .where(and(eq(financeSources.id, sourceId), eq(financeSources.groupId, wallet.groupId), isNull(financeSources.deletedAt)));
       if (!source) throw new FinanceLedgerError('NOT_FOUND', 'Source not found.', 404);
@@ -339,7 +354,10 @@ export async function updateTransaction(db: AppDatabase, context: FinanceSession
 
     const [total] = await tx.select({ balance: sql<string>`COALESCE(SUM(CASE WHEN ${financeTransactions.type} = 'income' THEN ${financeTransactions.amount} ELSE -${financeTransactions.amount} END), 0)::text` })
       .from(financeTransactions).where(and(eq(financeTransactions.walletId, current.walletId), isNull(financeTransactions.deletedAt), ne(financeTransactions.id, id)));
-    if (type === 'expense' && decimalToMinor(total?.balance ?? '0') < parseMoney(amount)) {
+    const baseBalance = decimalToMinor(total?.balance ?? '0');
+    const previousBalance = baseBalance + (current.type === 'income' ? parseMoney(current.amount) : -parseMoney(current.amount));
+    const nextBalance = baseBalance + (type === 'income' ? parseMoney(amount) : -parseMoney(amount));
+    if (nextBalance < 0n && nextBalance < previousBalance) {
       throw new FinanceLedgerError('INSUFFICIENT_FUNDS', 'Wallet balance is insufficient.', 409);
     }
     const [updated] = await tx.update(financeTransactions).set({ type, amount, sourceId, category, note, transactionDate, updatedBy: context.userId })
@@ -363,6 +381,11 @@ export async function deleteTransaction(db: AppDatabase, context: FinanceSession
       const [wallet] = await tx.select({ id: financeWallets.id }).from(financeWallets)
         .where(and(eq(financeWallets.id, current.walletId), eq(financeWallets.groupId, current.groupId))).for('update');
       if (!wallet) throw new FinanceLedgerError('NOT_FOUND', 'Transaction not found.', 404);
+      if (current.type === 'income') {
+        const [total] = await tx.select({ balance: sql<string>`COALESCE(SUM(CASE WHEN ${financeTransactions.type} = 'income' THEN ${financeTransactions.amount} ELSE -${financeTransactions.amount} END), 0)::text` })
+          .from(financeTransactions).where(and(eq(financeTransactions.walletId, current.walletId), isNull(financeTransactions.deletedAt)));
+        if (decimalToMinor(total?.balance ?? '0') < parseMoney(current.amount)) throw new FinanceLedgerError('INSUFFICIENT_FUNDS', 'Deleting this income would make the wallet balance negative.', 409);
+      }
       await tx.update(financeTransactions).set({ deletedAt: new Date(), updatedBy: context.userId }).where(eq(financeTransactions.id, id));
     }
     await lockFinanceSession(tx, context);
@@ -389,7 +412,8 @@ export async function listSources(db: AppDatabase, userId: string, groupId: stri
     .where(and(eq(financeGroupMembers.groupId, groupId), eq(financeGroupMembers.userId, userId)));
   if (!member) throw new FinanceLedgerError('NOT_FOUND', 'Group not found.', 404);
   return db.select({ id: financeSources.id, name: financeSources.name, type: financeSources.type })
-    .from(financeSources).where(and(eq(financeSources.groupId, groupId), isNull(financeSources.deletedAt)))
+    .from(financeSources).innerJoin(financeGroupMembers, and(eq(financeGroupMembers.groupId, financeSources.groupId), eq(financeGroupMembers.userId, userId)))
+    .where(and(eq(financeSources.groupId, groupId), isNull(financeSources.deletedAt)))
     .orderBy(desc(financeSources.createdAt));
 }
 
@@ -454,7 +478,8 @@ export async function getGroupBudget(db: AppDatabase, userId: string, groupId: s
     .where(and(eq(financeGroupMembers.groupId, groupId), eq(financeGroupMembers.userId, userId)));
   if (!member) throw new FinanceLedgerError('NOT_FOUND', 'Group not found.', 404);
   const [budget] = await db.select({ monthlyLimit: financeBudgets.monthlyLimit, currency: financeBudgets.currency, enabled: financeBudgets.enabled })
-    .from(financeBudgets).where(eq(financeBudgets.groupId, groupId));
+    .from(financeBudgets).innerJoin(financeGroupMembers, and(eq(financeGroupMembers.groupId, financeBudgets.groupId), eq(financeGroupMembers.userId, userId)))
+    .where(eq(financeBudgets.groupId, groupId));
   return budget ?? { monthlyLimit: null, currency: 'IDR', enabled: false };
 }
 
@@ -484,11 +509,13 @@ export async function getGroupSummary(db: AppDatabase, userId: string, groupId: 
   const [totals] = await db.select({
     income: sql<string>`COALESCE(SUM(CASE WHEN ${financeTransactions.type} = 'income' THEN ${financeTransactions.amount} ELSE 0 END), 0)::text`,
     expense: sql<string>`COALESCE(SUM(CASE WHEN ${financeTransactions.type} = 'expense' THEN ${financeTransactions.amount} ELSE 0 END), 0)::text`,
-  }).from(financeTransactions).where(and(eq(financeTransactions.groupId, groupId), isNull(financeTransactions.deletedAt), dateFilter));
+  }).from(financeTransactions).innerJoin(financeGroupMembers, and(eq(financeGroupMembers.groupId, financeTransactions.groupId), eq(financeGroupMembers.userId, userId)))
+    .where(and(eq(financeTransactions.groupId, groupId), isNull(financeTransactions.deletedAt), dateFilter));
   const income = decimalToMinor(totals?.income ?? '0');
   const expense = decimalToMinor(totals?.expense ?? '0');
   const [budget] = await db.select({ monthlyLimit: financeBudgets.monthlyLimit, currency: financeBudgets.currency, enabled: financeBudgets.enabled })
-    .from(financeBudgets).where(eq(financeBudgets.groupId, groupId));
+    .from(financeBudgets).innerJoin(financeGroupMembers, and(eq(financeGroupMembers.groupId, financeBudgets.groupId), eq(financeGroupMembers.userId, userId)))
+    .where(eq(financeBudgets.groupId, groupId));
   return {
     totalIncome: formatMoney(income), totalExpense: formatMoney(expense), balance: formatMoney(income - expense), start, end,
     budget: budget ?? { monthlyLimit: null, currency: 'IDR', enabled: false },

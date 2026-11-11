@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server';
-import { and, desc, eq, gt, isNull } from 'drizzle-orm';
+import { and, desc, eq, gt, isNull, sql } from 'drizzle-orm';
 import { jsonError, jsonResponse } from '@/lib/auth/api-guard';
 import { generateSessionToken } from '@/lib/auth/crypto';
 import { getDb } from '@/lib/db';
@@ -24,7 +24,8 @@ export async function GET(request: NextRequest) {
     if (!membership) throw new FinanceLedgerError('NOT_FOUND', 'Group not found.', 404);
     const members = await db.select({ id: financeGroupMembers.userId, username: financeUsers.username, role: financeGroupMembers.role })
       .from(financeGroupMembers).innerJoin(financeUsers, eq(financeUsers.id, financeGroupMembers.userId))
-      .where(eq(financeGroupMembers.groupId, groupId)).orderBy(desc(financeGroupMembers.createdAt));
+      .where(and(eq(financeGroupMembers.groupId, groupId), sql`EXISTS (SELECT 1 FROM finance_group_members AS viewer_membership WHERE viewer_membership.group_id = ${financeGroupMembers.groupId} AND viewer_membership.user_id = ${userId}::uuid)`))
+      .orderBy(desc(financeGroupMembers.createdAt));
     return jsonResponse({ members });
   } catch (error) { return errorResponse(error); }
 }
@@ -41,7 +42,7 @@ export async function POST(request: NextRequest) {
       await lockFinanceSession(tx, context);
       const [group] = await tx.select({ id: financeGroups.id }).from(financeGroups).where(eq(financeGroups.id, groupId)).for('update');
       const [membership] = await tx.select({ role: financeGroupMembers.role }).from(financeGroupMembers)
-        .where(and(eq(financeGroupMembers.groupId, groupId), eq(financeGroupMembers.userId, context.userId)));
+        .where(and(eq(financeGroupMembers.groupId, groupId), eq(financeGroupMembers.userId, context.userId))).for('update');
       if (!group || (membership?.role !== 'owner' && membership?.role !== 'admin'))
         throw new FinanceLedgerError('NOT_FOUND', 'Group not found.', 404);
       const active = await tx.select({ tokenHash: financeInvitations.tokenHash }).from(financeInvitations)
@@ -55,7 +56,7 @@ export async function POST(request: NextRequest) {
     });
     if (!invitation) throw new Error('Could not create invitation.');
     const url = new URL('/finance', env.APP_ORIGIN);
-    url.searchParams.set('invite', rawToken);
+    url.hash = new URLSearchParams({ invite: rawToken }).toString();
     return jsonResponse({ invitation: { url: url.toString(), expiresAt: invitation.expiresAt } }, { status: 201 });
   } catch (error) { return errorResponse(error); }
 }

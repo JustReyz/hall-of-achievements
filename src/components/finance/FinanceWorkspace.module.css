@@ -223,6 +223,10 @@
 .row:last-child {
   border-bottom: 0;
 }
+.row > .details {
+  flex: 1 0 100%;
+  min-width: 0;
+}
 .row strong {
   overflow-wrap: anywhere;
 }
@@ -243,6 +247,19 @@
   gap: 8px;
   font-size: 13px;
   font-weight: 500;
+}
+.deviceChoice {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  gap: 8px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.deviceChoice input {
+  width: 20px;
+  height: 20px;
+  flex: none;
 }
 .inlineField select {
   min-height: 44px;

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { prepareProfileImage } from '@/lib/finance/profile-image';
-import { deviceNotificationPermission, enableDeviceNotifications, sendDeviceReminder } from '@/lib/finance/device-reminders';
+import { deviceNotificationPermission, enableDeviceNotifications, prepareFinancePushSubscription, sendDeviceReminder } from '@/lib/finance/device-reminders';
 import styles from './FinanceWorkspace.module.css';
 
 type Group = { id: string; name: string; role: 'owner' | 'admin' | 'member' };
@@ -33,6 +33,7 @@ type Transaction = {
 type FinanceNote = { id: string; groupId: string; title: string; content: string | null; targetAt: string | null; isPinned: boolean; isCompleted: boolean };
 type FinanceReminder = { id: string; noteId: string; remindAt: string; recurrence: string; status: string; message: string | null };
 type FinanceScheduledTask = { id: string; title: string; details: string | null; scheduleAt: string; recurrence: string; isActive: boolean; completedAt: string | null };
+type FinanceDevice = { id: string; userAgent: string | null; createdAt: string };
 type Session = { authenticated: boolean; user?: { id: string; username: string; profilePicture?: string | null } };
 type TransactionList = { transactions: Transaction[]; hasMore: boolean };
 type RecoveredTransaction = {
@@ -165,6 +166,9 @@ export default function FinanceWorkspace() {
   const [plannerTasks, setPlannerTasks] = useState<FinanceScheduledTask[]>([]);
   const [plannerLoading, setPlannerLoading] = useState(false);
   const [devicePermission, setDevicePermission] = useState<NotificationPermission | 'unsupported'>('unsupported');
+  const [remoteDevices, setRemoteDevices] = useState<FinanceDevice[]>([]);
+  const [selectedDevices, setSelectedDevices] = useState<string[]>([]);
+  const [devicesLoaded, setDevicesLoaded] = useState(false);
   const [noteTitle, setNoteTitle] = useState('');
   const [noteContent, setNoteContent] = useState('');
   const [noteTargetAt, setNoteTargetAt] = useState('');
@@ -199,6 +203,7 @@ export default function FinanceWorkspace() {
   const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const remoteReminderAttempt = useRef<{ payload: string; key: string } | null>(null);
   const transactionFormRef = useRef<HTMLDetailsElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -273,13 +278,20 @@ export default function FinanceWorkspace() {
   }, []);
 
   useEffect(() => {
-    const token = new URLSearchParams(window.location.hash.slice(1)).get('invite');
+    setRemoteDevices([]); setSelectedDevices([]); setDevicesLoaded(false);
+    remoteReminderAttempt.current = null;
+  }, [financeUserId]);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const token = new URLSearchParams(url.hash.slice(1)).get('invite') ?? url.searchParams.get('invite');
     if (!token) return;
     if (/^[A-Za-z0-9_-]{43}$/.test(token)) {
       setInviteToken(token);
       setRegister(true);
     }
-    window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
+    url.searchParams.delete('invite');
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}`);
   }, []);
 
   const reportError = useCallback(
@@ -330,7 +342,7 @@ export default function FinanceWorkspace() {
     if (!groupId || !session?.authenticated) return;
     const controller = new AbortController();
     void request<{ members: GroupMember[] }>(`/api/finance/invitations?groupId=${encodeURIComponent(groupId)}`, { signal: controller.signal })
-      .then((result) => setMembers(result.members))
+      .then((result) => { if (!controller.signal.aborted) setMembers(result.members); })
       .catch((cause: unknown) => { if (!controller.signal.aborted) reportError(cause); });
     return () => controller.abort();
   }, [groupId, session?.authenticated, reportError]);
@@ -350,6 +362,7 @@ export default function FinanceWorkspace() {
       request<{ budget: GroupBudget }>(`/api/finance/budgets?${query}`, { signal: controller.signal }),
       request<{ summary: FinanceSummary }>(`/api/finance/summary?${query}`, { signal: controller.signal }),
     ]).then(([sourceResult, budgetResult, summaryResult]) => {
+      if (controller.signal.aborted) return;
       setSources(sourceResult.sources);
       setSourceId((current) => sourceResult.sources.some((source) => source.id === current) ? current : '');
       setBudget(budgetResult.budget);
@@ -374,6 +387,7 @@ export default function FinanceWorkspace() {
       request<{ reminders: FinanceReminder[] }>(`/api/finance/planner/reminders?${query}`, { signal: controller.signal }),
       request<{ tasks: FinanceScheduledTask[] }>(`/api/finance/planner/scheduled-tasks?${query}`, { signal: controller.signal }),
     ]).then(([notesResult, remindersResult, tasksResult]) => {
+      if (controller.signal.aborted) return;
       setPlannerNotes(notesResult.notes);
       setPlannerReminders(remindersResult.reminders);
       setReminderNoteId((current) => notesResult.notes.some((note) => note.id === current) ? current : (notesResult.notes[0]?.id ?? ''));
@@ -396,6 +410,7 @@ export default function FinanceWorkspace() {
       { signal: controller.signal }
     )
       .then((result) => {
+        if (controller.signal.aborted) return;
         setWallets(result.wallets);
         setWalletId(result.wallets[0]?.id ?? '');
       })
@@ -461,6 +476,7 @@ export default function FinanceWorkspace() {
       { signal: controller.signal }
     )
       .then((result) => {
+        if (controller.signal.aborted) return;
         setTransactions(result.transactions);
         setHasMoreTransactions(result.hasMore);
       })
@@ -667,6 +683,73 @@ export default function FinanceWorkspace() {
     finally { busyRef.current = false; setBusy(false); }
   };
 
+  const refreshRemoteDevices = async () => {
+    const result = await request<{ devices: FinanceDevice[] }>('/api/finance/push/devices');
+    setRemoteDevices(result.devices);
+    setSelectedDevices((current) => current.filter((id) => result.devices.some((device) => device.id === id)));
+    setDevicesLoaded(true);
+  };
+
+  const loadRemoteDevices = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null);
+    try { await refreshRemoteDevices(); }
+    catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const registerRemoteDevice = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try {
+      const { publicKey } = await request<{ publicKey: string }>('/api/finance/push/vapid');
+      const subscription = await prepareFinancePushSubscription(publicKey);
+      await request('/api/finance/push/devices', { method: 'POST', body: JSON.stringify(subscription) });
+      await refreshRemoteDevices();
+      setNotice('Perangkat terdaftar. Tidak ada notifikasi yang dikirim.');
+    } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const removeRemoteDevice = async (id: string) => {
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    try {
+      await request(`/api/finance/push/devices/${id}`, { method: 'DELETE' });
+      await refreshRemoteDevices(); setNotice('Perangkat tidak lagi menerima pengingat keuangan.');
+    } catch (cause) { reportError(cause); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+
+  const sendRemoteReminder = async (reminderId: string) => {
+    if (busyRef.current || selectedDevices.length === 0) return;
+    busyRef.current = true; setBusy(true); setError(null); setNotice(null);
+    const deviceIds = [...selectedDevices].sort();
+    const payload = JSON.stringify({ reminderId, deviceIds });
+    try {
+      if (remoteReminderAttempt.current && remoteReminderAttempt.current.payload !== payload) throw new Error('Selesaikan percobaan kirim sebelumnya dengan pilihan yang sama.');
+      remoteReminderAttempt.current ??= { payload, key: crypto.randomUUID() };
+      const result = await request<{ outcome: 'in_progress' | 'complete' | 'unknown'; results: { status: 'accepted' | 'rejected' | 'unknown' }[] }>('/api/finance/push/send', {
+        method: 'POST', body: JSON.stringify({ reminderId, deviceIds, idempotencyKey: remoteReminderAttempt.current.key }),
+      });
+      if (result.outcome === 'in_progress') setNotice('Pengiriman masih diproses. Tekan kirim lagi dengan pilihan yang sama untuk memeriksa status.');
+      else if (result.outcome === 'unknown') {
+        remoteReminderAttempt.current = null;
+        setNotice('Hasil pengiriman tidak diketahui. Mengirim lagi dapat menghasilkan notifikasi ganda.');
+      }
+      else {
+        remoteReminderAttempt.current = null;
+        const accepted = result.results.filter((item) => item.status === 'accepted').length;
+        const unknown = result.results.filter((item) => item.status === 'unknown').length;
+        setNotice(`${accepted} dari ${result.results.length} perangkat diterima penyedia notifikasi. Tampilan di perangkat belum dapat dipastikan.${unknown ? ` Hasil ${unknown} perangkat tidak diketahui; mengirim lagi dapat menghasilkan notifikasi ganda.` : ''}`);
+        await refreshRemoteDevices();
+      }
+    } catch (cause) {
+      if (cause instanceof RequestError && [400, 403, 404, 409].includes(cause.status)) remoteReminderAttempt.current = null;
+      reportError(cause);
+    } finally { busyRef.current = false; setBusy(false); }
+  };
+
   const cancelPlannerReminder = async (id: string) => {
     if (busyRef.current) return;
     busyRef.current = true; setBusy(true); setError(null); setNotice(null);
@@ -777,7 +860,7 @@ export default function FinanceWorkspace() {
   };
 
   const removeGroup = async () => {
-    if (!groupId || busyRef.current || !window.confirm('Hapus grup kosong ini? Grup yang berisi dompet tidak dapat dihapus.')) return;
+    if (!groupId || busyRef.current || !window.confirm('Hapus grup kosong ini? Grup yang memiliki data keuangan atau planner tidak dapat dihapus.')) return;
     busyRef.current = true; setBusy(true); setError(null); setNotice(null);
     try { await request(`/api/finance/groups/${groupId}`, { method: 'DELETE' }); await refreshGroups(); setNotice('Grup kosong dihapus.'); }
     catch (cause) { reportError(cause); }
@@ -1655,6 +1738,7 @@ export default function FinanceWorkspace() {
                       Sumber pembayaran
                       <select disabled={busy} value={sourceId} onChange={(event) => setSourceId(event.target.value)}>
                         <option value="">Tanpa sumber</option>
+                        {editingTransactionId && sourceId && !sources.some((source) => source.id === sourceId) && <option value={sourceId}>{transactions.find((transaction) => transaction.id === editingTransactionId)?.sourceName ?? 'Sumber'} (dinonaktifkan)</option>}
                         {sources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
                       </select>
                     </label>
@@ -1717,7 +1801,7 @@ export default function FinanceWorkspace() {
                 <h2 id="planner-heading" className={styles.sectionHeading}>Planner</h2>
                 <span className={styles.subtle}>Pengingat disimpan sebagai jadwal; tidak ada pesan otomatis yang dikirim.</span>
               </div>
-              {plannerLoading ? <p role="status" className={styles.empty}>Memuat planner…</p> : (
+              {!groupId ? <p className={styles.empty}>Pilih atau buat grup untuk menggunakan planner.</p> : plannerLoading ? <p role="status" className={styles.empty}>Memuat planner…</p> : (
                 <div className={styles.plannerGrid}>
                   <div>
                     <h3>Catatan</h3>
@@ -1759,10 +1843,27 @@ export default function FinanceWorkspace() {
                     {devicePermission === 'default' && <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void enableReminderNotifications()}>Aktifkan notifikasi perangkat</button>}
                     {devicePermission === 'denied' && <p className={styles.subtle}>Izin notifikasi diblokir. Ubah izin melalui pengaturan browser.</p>}
                     {devicePermission === 'unsupported' && <p className={styles.subtle}>Notifikasi perangkat tidak tersedia di browser ini.</p>}
+                    <details className={styles.details}>
+                      <summary>Perangkat akun untuk pengingat</summary>
+                      <p className={styles.subtle}>Daftarkan perangkat dengan akun ini, lalu pilih perangkat tujuan. Pendaftaran tidak mengirim notifikasi.</p>
+                      <div className={styles.actions}>
+                        <button type="button" className={styles.buttonSecondary} disabled={busy || devicePermission !== 'granted'} onClick={() => void registerRemoteDevice()}>Daftarkan perangkat ini</button>
+                        <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void loadRemoteDevices()}>Muat daftar perangkat</button>
+                      </div>
+                      {devicesLoaded && (remoteDevices.length ? <ul className={styles.list}>{remoteDevices.map((device, index) => (
+                        <li className={styles.row} key={device.id}>
+                          <label className={styles.deviceChoice}>
+                            <input type="checkbox" checked={selectedDevices.includes(device.id)} disabled={busy} onChange={(event) => { const checked = event.target.checked; setSelectedDevices((current) => checked ? [...current, device.id] : current.filter((id) => id !== device.id)); }} />
+                            <span>Perangkat {index + 1}<small>{device.userAgent || 'Browser'} · {new Date(device.createdAt).toLocaleDateString('id-ID')}</small></span>
+                          </label>
+                          <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void removeRemoteDevice(device.id)}>Hapus perangkat</button>
+                        </li>
+                      ))}</ul> : <p className={styles.empty}>Belum ada perangkat terdaftar.</p>)}
+                    </details>
                     {plannerReminders.length ? <ul className={styles.list}>{plannerReminders.map((reminder) => (
                       <li className={styles.row} key={reminder.id}>
                         <div><strong>{plannerNotes.find((note) => note.id === reminder.noteId)?.title ?? 'Catatan'}</strong><small>{new Date(reminder.remindAt).toLocaleString('id-ID')} · {reminder.recurrence === 'none' ? 'Sekali' : `Berulang ${reminder.recurrence}`} · {reminder.status === 'cancelled' ? 'Dibatalkan' : reminder.status === 'sent' ? 'Terkirim' : 'Menunggu'}</small></div>
-                        {reminder.status === 'pending' && <div className={styles.rowActions}><button type="button" className={styles.buttonSecondary} disabled={busy || devicePermission !== 'granted'} onClick={() => void sendReminderToDevice(reminder.id)}>Kirim ke perangkat ini</button><button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void cancelPlannerReminder(reminder.id)}>Batalkan</button></div>}
+                        {reminder.status === 'pending' && <div className={styles.rowActions}><button type="button" className={styles.buttonSecondary} disabled={busy || devicePermission !== 'granted'} onClick={() => void sendReminderToDevice(reminder.id)}>Kirim ke perangkat ini</button><button type="button" className={styles.buttonSecondary} disabled={busy || selectedDevices.length === 0} onClick={() => void sendRemoteReminder(reminder.id)}>Kirim ke perangkat terpilih</button><button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void cancelPlannerReminder(reminder.id)}>Batalkan</button></div>}
                       </li>
                     ))}</ul> : <p className={styles.empty}>Belum ada pengingat.</p>}
                     {plannerNotes.length > 0 && <details className={styles.details}>
