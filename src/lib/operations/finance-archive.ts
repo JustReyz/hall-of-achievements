@@ -60,6 +60,7 @@ export const financeArchiveSchema = z.object({
   };
   unique(archive.users.map((row) => row.id), 'users');
   unique(archive.groups.map((row) => row.id), 'groups');
+  unique(archive.members.map((row) => `${row.groupId}:${row.userId}`), 'members');
   unique(archive.sources.map((row) => row.id), 'sources');
   unique(archive.budgets.map((row) => row.groupId), 'budgets');
   unique(archive.wallets.map((row) => row.id), 'wallets');
@@ -72,11 +73,15 @@ export const financeArchiveSchema = z.object({
   for (const row of archive.importRecords) if (row.targetId !== saversImportId(row.kind, row.legacyId)) context.addIssue({ code: 'custom', path: ['importRecords'], message: 'import record target does not match its legacy identifier' });
   const users = new Set(archive.users.map((row) => row.id));
   const groups = new Set(archive.groups.map((row) => row.id));
-  const members = new Set(archive.members.map((row) => `${row.groupId}:${row.userId}`));
+  const ownerCounts = new Map<string, number>();
+  for (const member of archive.members) if (member.role === 'owner') ownerCounts.set(member.groupId, (ownerCounts.get(member.groupId) ?? 0) + 1);
   const sources = new Map(archive.sources.map((row) => [row.id, row.groupId]));
   const wallets = new Map(archive.wallets.map((row) => [row.id, row.groupId]));
   const notes = new Map(archive.notes.map((row) => [row.id, row.groupId]));
-  for (const row of archive.groups) if (!users.has(row.createdBy)) context.addIssue({ code: 'custom', path: ['groups'], message: `unknown creator ${row.createdBy}` });
+  for (const row of archive.groups) {
+    if (!users.has(row.createdBy)) context.addIssue({ code: 'custom', path: ['groups'], message: `unknown creator ${row.createdBy}` });
+    if (ownerCounts.get(row.id) !== 1) context.addIssue({ code: 'custom', path: ['groups'], message: `group ${row.id} must have exactly one owner` });
+  }
   for (const row of archive.members) if (!groups.has(row.groupId) || !users.has(row.userId)) context.addIssue({ code: 'custom', path: ['members'], message: 'membership references an unknown group or user' });
   for (const row of archive.sources) if (!groups.has(row.groupId) || !users.has(row.createdBy)) context.addIssue({ code: 'custom', path: ['sources'], message: 'source references an unknown group or creator' });
   for (const row of archive.budgets) if (!groups.has(row.groupId)) context.addIssue({ code: 'custom', path: ['budgets'], message: 'budget references an unknown group' });
@@ -89,8 +94,8 @@ export const financeArchiveSchema = z.object({
     }
   }
   for (const row of archive.notes) if (!groups.has(row.groupId) || !users.has(row.createdBy)) context.addIssue({ code: 'custom', path: ['notes'], message: 'note references an unknown group or user' });
-  for (const row of archive.reminders) if (notes.get(row.noteId) !== row.groupId || !members.has(`${row.groupId}:${row.createdBy}`)) context.addIssue({ code: 'custom', path: ['reminders'], message: 'reminder references an unknown note or group member' });
-  for (const row of archive.scheduledTasks) if (!groups.has(row.groupId) || !members.has(`${row.groupId}:${row.createdBy}`)) context.addIssue({ code: 'custom', path: ['scheduledTasks'], message: 'scheduled task references an unknown group member' });
+  for (const row of archive.reminders) if (notes.get(row.noteId) !== row.groupId || !users.has(row.createdBy)) context.addIssue({ code: 'custom', path: ['reminders'], message: 'reminder references an unknown note or creator' });
+  for (const row of archive.scheduledTasks) if (!groups.has(row.groupId) || !users.has(row.createdBy)) context.addIssue({ code: 'custom', path: ['scheduledTasks'], message: 'scheduled task references an unknown group or creator' });
 });
 
 export type FinanceArchive = z.infer<typeof financeArchiveSchema>;

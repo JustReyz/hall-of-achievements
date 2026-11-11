@@ -19,6 +19,7 @@ import {
   financeInvitations,
   financeNoteReminders,
   financeNotes,
+  financePushSubscriptions,
   financeScheduledTasks,
   financeSessions,
   financeSources,
@@ -32,6 +33,7 @@ import { MAX_COLLECTION_MEMBERS, MAX_COLLECTION_NAME_LENGTH } from '../validatio
 import type { ExportManifest } from './export';
 import { isValidThumbnailPosition } from '../validation/achievement';
 import { financeArchiveSchema } from './finance-archive';
+import { lockFinanceRestore } from '../finance/restore-lock';
 
 export interface RestoreOptions {
   inputDir: string;
@@ -489,6 +491,9 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
 
   // 5. Atomic database transaction: ingest achievements, assets, and apply security invalidations atomically
   await db.transaction(async (tx) => {
+    await lockFinanceRestore(tx);
+    // Lock finance sessions before membership rows, matching finance writes and push dispatch.
+    await tx.update(financeSessions).set({ revokedAt: new Date() }).where(isNull(financeSessions.revokedAt));
     for (const a of rawAchievements) {
       const thumbnailPositionX = manifest.version === 1 ? 0.5 : a.thumbnailPositionX;
       const thumbnailPositionY = manifest.version === 1 ? 0.5 : a.thumbnailPositionY;
@@ -651,6 +656,7 @@ export async function restoreArchive(options: RestoreOptions): Promise<RestoreRe
     // must not survive a restore that replaces account or membership state.
     await tx.update(financeSessions).set({ revokedAt: new Date() }).where(isNull(financeSessions.revokedAt));
     await tx.update(financeInvitations).set({ revokedAt: new Date() }).where(isNull(financeInvitations.revokedAt));
+    await tx.update(financePushSubscriptions).set({ status: 'disabled', updatedAt: new Date() }).where(eq(financePushSubscriptions.status, 'active'));
 
     // Post-restore security guarantees: invalidate all target sessions and disable push subscriptions
     await tx.update(sessions).set({

@@ -12,6 +12,7 @@
 # Local runtime, app outputs, media, databases, and backups.
 .agent-runtime/
 .agents/
+/.superpowers/
 node_modules/
 .next/
 .vercel/

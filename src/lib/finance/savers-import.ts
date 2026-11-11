@@ -19,7 +19,7 @@ const sourceSchema = z.object({
   note_reminders: z.array(z.object({ id, note_id: id, user_id: id, reminder_type: z.enum(['relative', 'recurring']), lead_minutes: z.number().int().nonnegative().nullable(), remind_at: time, recurrence: z.enum(['none', 'daily', 'weekly', 'monthly', 'yearly']), until_date: z.string().date().nullable(), message: text(1000), status: z.enum(['pending', 'sent', 'cancelled']), delivered_count: z.number().int().nonnegative(), last_notified_at: time.nullable(), created_at: time, updated_at: time }).passthrough()),
   scheduled_tasks: z.array(z.object({ id, user_id: id, title: z.string().trim().min(1).max(200), details: text(10000), schedule_at: time, recurrence: z.enum(['once', 'daily', 'weekly', 'monthly']), is_active: z.boolean(), last_notified_at: time.nullable(), completed_at: time.nullable(), created_at: time, updated_at: time }).passthrough()),
 }).passthrough();
-const mappingsSchema = z.object({ users: z.record(id), walletGroups: z.record(id), plannerGroups: z.record(id) }).strict();
+const mappingsSchema = z.object({ users: z.record(z.string(), id), walletGroups: z.record(z.string(), id), plannerGroups: z.record(z.string(), id) }).strict();
 
 const asDate = (value: string | null) => value === null ? null : new Date(value);
 const sameDate = (left: Date | null, right: string | null) => left === null ? right === null : right !== null && left.getTime() === new Date(right).getTime();

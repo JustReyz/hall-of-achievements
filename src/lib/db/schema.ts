@@ -166,7 +166,7 @@ export const financeNoteReminders = pgTable('finance_note_reminders', {
   id: uuid('id').primaryKey().defaultRandom(),
   groupId: uuid('group_id').notNull(),
   noteId: uuid('note_id').notNull(),
-  createdBy: uuid('created_by').notNull(),
+  createdBy: uuid('created_by').notNull().references(() => financeUsers.id, { onDelete: 'restrict' }),
   reminderType: varchar('reminder_type', { length: 16 }).$type<'relative' | 'recurring'>().notNull().default('relative'),
   leadMinutes: integer('lead_minutes'),
   remindAt: timestamp('remind_at', { withTimezone: true, mode: 'date' }).notNull(),
@@ -180,7 +180,6 @@ export const financeNoteReminders = pgTable('finance_note_reminders', {
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (table) => [
   foreignKey({ columns: [table.groupId, table.noteId], foreignColumns: [financeNotes.groupId, financeNotes.id], name: 'finance_note_reminders_note_group_fk' }).onDelete('cascade'),
-  foreignKey({ columns: [table.groupId, table.createdBy], foreignColumns: [financeGroupMembers.groupId, financeGroupMembers.userId], name: 'finance_note_reminders_member_group_fk' }).onDelete('cascade'),
   index('idx_finance_note_reminders_due').on(table.status, table.remindAt),
   check('finance_note_reminders_type_check', sql`${table.reminderType} IN ('relative', 'recurring')`),
   check('finance_note_reminders_recurrence_check', sql`${table.recurrence} IN ('none', 'daily', 'weekly', 'monthly', 'yearly')`),
@@ -191,7 +190,7 @@ export const financeNoteReminders = pgTable('finance_note_reminders', {
 export const financeScheduledTasks = pgTable('finance_scheduled_tasks', {
   id: uuid('id').primaryKey().defaultRandom(),
   groupId: uuid('group_id').notNull().references(() => financeGroups.id, { onDelete: 'cascade' }),
-  createdBy: uuid('created_by').notNull(),
+  createdBy: uuid('created_by').notNull().references(() => financeUsers.id, { onDelete: 'restrict' }),
   title: varchar('title', { length: 200 }).notNull(),
   details: text('details'),
   scheduleAt: timestamp('schedule_at', { withTimezone: true, mode: 'date' }).notNull(),
@@ -202,7 +201,6 @@ export const financeScheduledTasks = pgTable('finance_scheduled_tasks', {
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 }, (table) => [
-  foreignKey({ columns: [table.groupId, table.createdBy], foreignColumns: [financeGroupMembers.groupId, financeGroupMembers.userId], name: 'finance_scheduled_tasks_member_group_fk' }).onDelete('cascade'),
   index('idx_finance_scheduled_tasks_group_schedule').on(table.groupId, table.scheduleAt),
   check('finance_scheduled_tasks_recurrence_check', sql`${table.recurrence} IN ('once', 'daily', 'weekly', 'monthly')`),
 ]);
@@ -230,6 +228,37 @@ export const financeImportRecords = pgTable('finance_import_records', {
   primaryKey({ columns: [table.kind, table.legacyId] }),
   uniqueIndex('idx_finance_import_records_target').on(table.kind, table.targetId),
   check('finance_import_records_kind_check', sql`${table.kind} IN ('wallet', 'transaction', 'note', 'reminder', 'task')`),
+]);
+
+export const financePushSubscriptions = pgTable('finance_push_subscriptions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => financeUsers.id, { onDelete: 'cascade' }),
+  endpoint: text('endpoint').notNull(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  userAgent: text('user_agent'),
+  status: varchar('status', { length: 16 }).$type<'active' | 'disabled'>().notNull().default('active'),
+  createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('idx_finance_push_endpoint').on(table.endpoint),
+  index('idx_finance_push_user').on(table.userId, table.status),
+  check('finance_push_status_check', sql`${table.status} IN ('active', 'disabled')`),
+]);
+
+export const financePushAttempts = pgTable('finance_push_attempts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => financeUsers.id, { onDelete: 'cascade' }),
+  reminderId: uuid('reminder_id').notNull(),
+  idempotencyKey: uuid('idempotency_key').notNull(),
+  targetIds: jsonb('target_ids').$type<string[]>().notNull(),
+  outcome: varchar('outcome', { length: 16 }).$type<'in_progress' | 'complete'>().notNull().default('in_progress'),
+  results: jsonb('results').$type<{ subscriptionId: string; status: 'accepted' | 'rejected' | 'unknown' }[]>().notNull().default([]),
+  attemptedAt: timestamp('attempted_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('idx_finance_push_attempt_idempotency').on(table.userId, table.idempotencyKey),
+  index('idx_finance_push_attempt_user_time').on(table.userId, table.attemptedAt),
+  check('finance_push_attempt_outcome_check', sql`${table.outcome} IN ('in_progress', 'complete')`),
 ]);
 
 /**

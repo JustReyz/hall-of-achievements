@@ -222,7 +222,7 @@ const FINANCE_SCHEMA_UPGRADES = [
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT finance_note_reminders_note_group_fk FOREIGN KEY (group_id, note_id) REFERENCES finance_notes(group_id, id) ON DELETE CASCADE,
-    CONSTRAINT finance_note_reminders_member_group_fk FOREIGN KEY (group_id, created_by) REFERENCES finance_group_members(group_id, user_id) ON DELETE CASCADE
+    CONSTRAINT finance_note_reminders_creator_fk FOREIGN KEY (created_by) REFERENCES finance_users(id) ON DELETE RESTRICT
   )`,
   `CREATE INDEX IF NOT EXISTS idx_finance_note_reminders_due ON finance_note_reminders(status, remind_at)`,
   `CREATE TABLE IF NOT EXISTS finance_scheduled_tasks (
@@ -238,8 +238,22 @@ const FINANCE_SCHEMA_UPGRADES = [
     completed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT finance_scheduled_tasks_member_group_fk FOREIGN KEY (group_id, created_by) REFERENCES finance_group_members(group_id, user_id) ON DELETE CASCADE
+    CONSTRAINT finance_scheduled_tasks_creator_fk FOREIGN KEY (created_by) REFERENCES finance_users(id) ON DELETE RESTRICT
   )`,
+  `DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'finance_note_reminders_member_group_fk' AND conrelid = 'finance_note_reminders'::regclass) THEN
+      ALTER TABLE finance_note_reminders DROP CONSTRAINT finance_note_reminders_member_group_fk;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'finance_note_reminders_creator_fk' AND conrelid = 'finance_note_reminders'::regclass) THEN
+      ALTER TABLE finance_note_reminders ADD CONSTRAINT finance_note_reminders_creator_fk FOREIGN KEY (created_by) REFERENCES finance_users(id) ON DELETE RESTRICT;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'finance_scheduled_tasks_member_group_fk' AND conrelid = 'finance_scheduled_tasks'::regclass) THEN
+      ALTER TABLE finance_scheduled_tasks DROP CONSTRAINT finance_scheduled_tasks_member_group_fk;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'finance_scheduled_tasks_creator_fk' AND conrelid = 'finance_scheduled_tasks'::regclass) THEN
+      ALTER TABLE finance_scheduled_tasks ADD CONSTRAINT finance_scheduled_tasks_creator_fk FOREIGN KEY (created_by) REFERENCES finance_users(id) ON DELETE RESTRICT;
+    END IF;
+  END $$`,
   `CREATE INDEX IF NOT EXISTS idx_finance_scheduled_tasks_group_schedule ON finance_scheduled_tasks(group_id, schedule_at)`,
   `CREATE TABLE IF NOT EXISTS finance_import_records (
     kind VARCHAR(16) NOT NULL CHECK (kind IN ('wallet', 'transaction', 'note', 'reminder', 'task')),
@@ -250,6 +264,31 @@ const FINANCE_SCHEMA_UPGRADES = [
     PRIMARY KEY (kind, legacy_id)
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_finance_import_records_target ON finance_import_records (kind, target_id)`,
+  `CREATE TABLE IF NOT EXISTS finance_push_subscriptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES finance_users(id) ON DELETE CASCADE,
+    endpoint TEXT NOT NULL,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    user_agent TEXT,
+    status VARCHAR(16) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_finance_push_endpoint ON finance_push_subscriptions (endpoint)`,
+  `CREATE INDEX IF NOT EXISTS idx_finance_push_user ON finance_push_subscriptions (user_id, status)`,
+  `CREATE TABLE IF NOT EXISTS finance_push_attempts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES finance_users(id) ON DELETE CASCADE,
+    reminder_id UUID NOT NULL,
+    idempotency_key UUID NOT NULL,
+    target_ids JSONB NOT NULL,
+    outcome VARCHAR(16) NOT NULL DEFAULT 'in_progress' CHECK (outcome IN ('in_progress', 'complete')),
+    results JSONB NOT NULL DEFAULT '[]'::jsonb,
+    attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_finance_push_attempt_idempotency ON finance_push_attempts (user_id, idempotency_key)`,
+  `CREATE INDEX IF NOT EXISTS idx_finance_push_attempt_user_time ON finance_push_attempts (user_id, attempted_at)`,
 ];
 
 export async function applyArchiveSchemaUpgrades(client: UpgradeClient): Promise<void> {

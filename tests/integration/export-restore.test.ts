@@ -5,7 +5,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { resetDatabase, getDb } from '@/lib/db';
-import { achievements, assets, sessions, pushSubscriptions, financeUsers, financeGroups, financeGroupMembers, financeImportRecords, financeSources, financeBudgets, financeWallets, financeTransactions, financeSessions, financeInvitations, financeNotes, financeNoteReminders, financeScheduledTasks } from '@/lib/db/schema';
+import { achievements, assets, sessions, pushSubscriptions, financeUsers, financeGroups, financeGroupMembers, financeImportRecords, financeSources, financeBudgets, financeWallets, financeTransactions, financeSessions, financeInvitations, financeNotes, financeNoteReminders, financeScheduledTasks, financePushSubscriptions } from '@/lib/db/schema';
 import { getStorage } from '@/lib/storage';
 import { MemoryStorageAdapter } from '@/lib/storage/memory';
 import { exportArchive } from '@/lib/operations/export';
@@ -74,6 +74,7 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
     await db.insert(financeImportRecords).values({ kind: 'wallet', legacyId: legacyWalletId, targetId: saversImportId('wallet', legacyWalletId), groupId });
     await db.insert(financeSessions).values({ tokenHash: sessionTokenHash, userId, idleExpiresAt: new Date(now.getTime() + 60_000), expiresAt: new Date(now.getTime() + 60_000) });
     await db.insert(financeInvitations).values({ tokenHash: invitationTokenHash, groupId, invitedBy: userId, expiresAt: new Date(now.getTime() + 60_000) });
+    await db.insert(financePushSubscriptions).values({ userId, endpoint: 'https://fcm.googleapis.com/fcm/send/private-capability', p256dh: 'secret-public-key', auth: 'secret-auth-key' });
 
     const outputDir = createTmpDir('finance-roundtrip');
     const archive = await exportArchive({ outputDir, db, storage });
@@ -82,6 +83,8 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
     const financeFile = fs.readFileSync(path.join(outputDir, 'metadata', 'finance.json'), 'utf8');
     expect(financeFile).not.toContain(sessionTokenHash);
     expect(financeFile).not.toContain(invitationTokenHash);
+    expect(financeFile).not.toContain('private-capability');
+    expect(financeFile).not.toContain('secret-auth-key');
 
     await db.insert(financeSessions).values({ tokenHash: crypto.randomBytes(32).toString('hex'), userId, idleExpiresAt: new Date(now.getTime() + 60_000), expiresAt: new Date(now.getTime() + 60_000) });
     await db.delete(financeImportRecords);
@@ -98,6 +101,7 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
     expect((await db.select().from(financeBudgets)).map(({ monthlyLimit }) => monthlyLimit)).toEqual(['2500000.00']);
     expect((await db.select().from(financeSessions)).every((session) => session.revokedAt instanceof Date)).toBe(true);
     expect((await db.select().from(financeInvitations)).every((invitation) => invitation.revokedAt instanceof Date)).toBe(true);
+    expect((await db.select().from(financePushSubscriptions)).every((subscription) => subscription.status === 'disabled')).toBe(true);
   });
 
   it('restores version 6 archives without import records and rejects incomplete version 7 archives', async () => {
@@ -121,6 +125,28 @@ describe('Integration: Operator Export & Restore Protocol (AC11)', () => {
     manifest.version = 7;
     fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     await expect(restoreArchive({ inputDir: outputDir, db, storage })).rejects.toThrow('Missing importRecords');
+  });
+
+  it('restores planner history authored by a former group member', async () => {
+    const db = await getDb();
+    const storage = getStorage() as MemoryStorageAdapter;
+    const passwordHash = await hashFinancePassword('a-strong-finance-password');
+    const [owner, former] = await db.insert(financeUsers).values([
+      { username: 'history-owner', displayName: 'Owner', passwordHash },
+      { username: 'history-former', displayName: 'Former', passwordHash },
+    ]).returning();
+    const [group] = await db.insert(financeGroups).values({ name: 'History', createdBy: owner!.id }).returning();
+    await db.insert(financeGroupMembers).values({ groupId: group!.id, userId: owner!.id, role: 'owner' });
+    const [note] = await db.insert(financeNotes).values({ groupId: group!.id, createdBy: former!.id, title: 'History' }).returning();
+    await db.insert(financeNoteReminders).values({ groupId: group!.id, noteId: note!.id, createdBy: former!.id, remindAt: new Date() });
+    await db.insert(financeScheduledTasks).values({ groupId: group!.id, createdBy: former!.id, title: 'Task', scheduleAt: new Date() });
+    const outputDir = createTmpDir('finance-former-member');
+    await exportArchive({ outputDir, db, storage });
+    await db.delete(financeNoteReminders);
+    await db.delete(financeScheduledTasks);
+    await restoreArchive({ inputDir: outputDir, db, storage });
+    expect((await db.select().from(financeNoteReminders))[0]?.createdBy).toBe(former!.id);
+    expect((await db.select().from(financeScheduledTasks))[0]?.createdBy).toBe(former!.id);
   });
 
   it('validates finance archive relationships before any database changes', async () => {

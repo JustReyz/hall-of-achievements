@@ -71,7 +71,9 @@ describe('finance API', () => {
       method: 'POST', headers: authHeaders, body: JSON.stringify({ groupId: group.id }),
     }))).status).toBe(201);
     const invitation = (await invitationResponse.json()).invitation as { url: string };
-    const inviteToken = new URL(invitation.url).searchParams.get('invite');
+    const inviteUrl = new URL(invitation.url);
+    expect(inviteUrl.searchParams.has('invite')).toBe(false);
+    const inviteToken = new URLSearchParams(inviteUrl.hash.slice(1)).get('invite');
     const memberRegistration = await register(new NextRequest('http://localhost:3000/api/finance/session', {
       method: 'POST', headers: { origin: 'http://localhost:3000' },
       body: JSON.stringify({ action: 'register', username: 'member', password: 'another-secure-password', inviteToken }),

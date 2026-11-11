@@ -41,12 +41,12 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const urlToOpen = (event.notification.data && event.notification.data.url) || '/';
+  const urlToOpen = event.notification.data && event.notification.data.url === '/finance' ? '/finance' : '/';
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
       for (const client of windowClients) {
-        if (client.url && client.url.includes(self.location.origin) && 'focus' in client) {
+        if (client.url && new URL(client.url).origin === self.location.origin && new URL(client.url).pathname === urlToOpen && 'focus' in client) {
           return client.focus();
         }
       }
